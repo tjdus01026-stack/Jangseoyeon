@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- 모바일 필수: 이 태그가 없으면 폰에서 PC용 화면처럼 축소되어 터치가 스크롤/확대로 해석됨 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no" />
+    <title>과제 모음</title>
+    <style>
+      /* 허브 페이지는 절대 스크롤/선택되지 않게 고정 (아이폰에서 터치가 페이지 스크롤로 새는 것 방지) */
+      html, body {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        overscroll-behavior: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+        font-family: sans-serif;
+      }
+      /* 왼쪽 메뉴 */
+      #menu {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100px;
+        height: 100%;
+        padding: 20px;
+        box-sizing: border-box;
+        background: #fff;
+      }
+      #menu a {
+        display: block;
+        margin-bottom: 10px;
+        cursor: pointer;
+        color: blue;
+      }
+      /* iframe 영역: 메뉴(100px)를 뺀 나머지 화면 전체 */
+      #stage {
+        position: fixed;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 100px;
+        overflow: hidden;
+      }
+      #viewer {
+        display: block;
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="menu">
+      <a onclick="loadHomework('Homework1')">Homework1</a>
+      <a onclick="loadHomework('Homework2')">Homework2</a>
+      <a onclick="loadHomework('Homework3')">Homework3</a>
+    </div>
+
+    <div id="stage">
+      <!-- 처음 열었을 때 보여줄 과제 -->
+      <iframe id="viewer" src="Homework1/index.html"></iframe>
+    </div>
+
+    <script>
+      // 메뉴 클릭 시 iframe에 해당 폴더의 index.html을 불러옴
+      function loadHomework(folderName) {
+        document.getElementById("viewer").src = folderName + "/index.html";
+      }
+    </script>
+  </body>
+</html>
