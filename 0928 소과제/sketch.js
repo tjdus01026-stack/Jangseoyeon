@@ -338,7 +338,7 @@ for (let row = 0; row < rowPattern.length; row++) {
   }
 }
 
-const ballRadius = UNIT * 0.45;
+const ballRadius = UNIT * 0.62;
 
 const ballX = centerX + catapultWidth * 0.45;
 
