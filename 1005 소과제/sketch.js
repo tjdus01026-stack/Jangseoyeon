@@ -793,16 +793,17 @@
       }
       cx /= piece.length;
       cy /= piece.length;
-      const minR = Math.max(16, this.thickness * 0.28);
-      const maxR = Math.max(minR + 10, this.thickness * 0.52);
+      const minR = Math.max(18, this.thickness * 0.32);
+      const maxR = Math.max(minR + 12, this.thickness * 0.58);
       let maxR0 = 0;
       for (const n of piece) maxR0 = Math.max(maxR0, n.rx, n.ry);
       const targetMax = rand(minR, maxR);
       const scale = maxR0 > 0.6 ? targetMax / maxR0 : 1;
+
       const localNodes = piece.map((n) => {
-        const rx = Math.max(n.rx * scale, targetMax * 0.32);
-        const ry = Math.max(n.ry * scale, targetMax * 0.32 * this.flat);
-        return { dx: (n.x - cx) * 0.85, dy: -(n.y - cy) * 0.62, rx, ry };
+        const rx = Math.max(n.rx * scale, targetMax * 0.55);
+        const ry = Math.max(n.ry * scale, targetMax * 0.55 * this.flat);
+        return { dx: (n.x - cx) * 0.85, dy: -(n.y - cy) * 0.5, rx, ry };
       });
 
       this.falling.push({
@@ -926,10 +927,17 @@
         }
         const surface = this.pileTopY();
         if (c.cy + maxBottom >= surface) {
-          const settle = this.thickness * 0.5;
+          // Sink deep into whatever's already piled up (well past where the
+          // two pieces would just graze each other) so the narrow "neck"
+          // between one piece and the next stays shallow instead of pinching
+          // all the way in — that pinch was what made the pile read as a
+          // string of separate beads/circles instead of one continuous,
+          // gently rippled icicle-like column. Floored (not just
+          // proportional to thickness) so slender sites still get enough.
+          const settle = Math.max(this.thickness * 0.85, 34);
           const shiftY = surface - (c.cy + maxBottom) + settle;
-          const jitterX = rand(-this.thickness * 0.26, this.thickness * 0.26);
-          const sizeMul = rand(0.85, 1.4);
+          const jitterX = rand(-this.thickness * 0.18, this.thickness * 0.18);
+          const sizeMul = rand(0.9, 1.3);
           const cos = Math.cos(c.angle),
             sin = Math.sin(c.angle);
           for (const n of c.nodes) {
@@ -1170,7 +1178,6 @@
       const fracs = [];
       for (let i = 0; i < SITE_COUNT; i++) {
         const base = 0.05 + i * (0.9 / (SITE_COUNT - 1));
-
         fracs.push(clamp(base + rand(-0.014, 0.014), 0.02, 0.98));
       }
       sites = fracs.map((f, i) => new Site(f, i % PALETTE.length));
@@ -1249,12 +1256,7 @@
       return;
     }
     const p = canvasPos(e);
-    // Sites can sit close enough together that more than one hit box
-    // covers the same click (especially now that there are more of them,
-    // packed more tightly) — picking the first match in array order meant
-    // a click near one icicle could end up breaking its neighbor instead.
-    // Picking whichever matching site's own center is actually closest to
-    // the click fixes that.
+
     let best = null,
       bestDist = Infinity;
     for (const s of sites) {
