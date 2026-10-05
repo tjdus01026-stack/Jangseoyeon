@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title></title>
+    <style>
+      :root {
+        --bg-top: #2c2440;
+        --bg-mid: #4a3a5c;
+        --bg-bot: #6b5a74;
+        --pill-bg: rgba(255, 246, 250, 0.85);
+        --pill-fg: #574060;
+        --accent: #f3c9dd;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: linear-gradient(
+          to bottom,
+          var(--bg-top),
+          var(--bg-mid) 55%,
+          var(--bg-bot)
+        );
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Pretendard",
+          "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
+      }
+
+      #scene {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        cursor: pointer;
+        touch-action: none;
+      }
+
+      #scene.dragging {
+        cursor: grabbing;
+      }
+
+      #scene.hover-joint {
+        cursor: grab;
+      }
+
+      /* Text-carrying overlay elements are kept in the DOM (in case the
+         script still toggles classes/opacity on them) but never show any
+         glyphs — collapsed to nothing and hidden from layout/AT. */
+      .overlay,
+      .pill {
+        display: none !important;
+      }
+
+      #hud {
+        position: fixed;
+        right: 20px;
+        bottom: 20px;
+        z-index: 10;
+      }
+
+      #resetBtn {
+        font-family: inherit;
+        font-size: 0;
+        line-height: 0;
+        color: var(--pill-fg);
+        background: var(--pill-bg);
+        border: none;
+        border-radius: 999px;
+        width: 38px;
+        height: 38px;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        box-shadow: 0 6px 20px rgba(60, 30, 70, 0.25);
+        backdrop-filter: blur(6px);
+        transition:
+          transform 0.2s ease,
+          box-shadow 0.2s ease;
+      }
+
+      #resetBtn svg {
+        width: 17px;
+        height: 17px;
+        display: block;
+      }
+
+      #resetBtn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 26px rgba(60, 30, 70, 0.32);
+      }
+
+      #resetBtn:active {
+        transform: translateY(0px) scale(0.97);
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="scene"></canvas>
+
+    <div id="intro" class="overlay" aria-hidden="true">
+      <p></p>
+    </div>
+
+    <div id="hud">
+      <button id="resetBtn" aria-label="reset">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M3 12a9 9 0 1 0 3-6.7" />
+          <path d="M3 4v5h5" />
+        </svg>
+      </button>
+    </div>
+
+    <div id="hint" class="pill" aria-hidden="true"></div>
+
+    <script src="sketch.js"></script>
+  </body>
+</html>
