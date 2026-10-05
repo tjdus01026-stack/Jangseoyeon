@@ -394,9 +394,6 @@
     return arr;
   }
 
-  /**
-   * nodes: [{x,y,r}] or [{x,y,rx,ry}] in WORLD coordinates
-   */
   function paintBlobCluster(layer, nodes, palette, speckles, opts) {
     if (!nodes.length) return;
     opts = opts || {};
@@ -930,13 +927,6 @@
         }
         const surface = this.pileTopY();
         if (c.cy + maxBottom >= surface) {
-          // Sink deep into whatever's already piled up (well past where the
-          // two pieces would just graze each other) so the narrow "neck"
-          // between one piece and the next stays shallow instead of pinching
-          // all the way in — that pinch was what made the pile read as a
-          // string of separate beads/circles instead of one continuous,
-          // gently rippled icicle-like column. Floored (not just
-          // proportional to thickness) so slender sites still get enough.
           const settle = Math.max(this.thickness * 0.85, 34);
           const shiftY = surface - (c.cy + maxBottom) + settle;
           const jitterX = rand(-this.thickness * 0.18, this.thickness * 0.18);
@@ -1027,7 +1017,11 @@
     }
 
     render() {
-      const blur = clamp(this.thickness * 0.18, 4, 7);
+      // Barely any blur at all — just enough to take the hard pixel edge
+      // off each stamped circle. Each node stays clearly readable as its
+      // own scalloped bump (the reference "beaded icicle" look) instead of
+      // melting into one soft continuous silhouette.
+      const blur = clamp(this.thickness * 0.045, 1.4, 2.6);
       if (this.rubble && this.rubble.length) {
         paintBlobCluster(
           this.layerDebris,
@@ -1058,7 +1052,7 @@
         drawJointMarker(this.joint, this.dragging);
       } else if (this.state === "collapsing") {
         if (this.debrisChunks && this.debrisChunks.length) {
-          const blurD = clamp(this.thickness * 0.14, 3, 5);
+          const blurD = clamp(this.thickness * 0.04, 1.2, 2.2);
           for (const ch of this.debrisChunks) {
             const cos = Math.cos(ch.angle),
               sin = Math.sin(ch.angle);
@@ -1077,7 +1071,7 @@
       }
 
       if (this.falling.length) {
-        const blurF = clamp(this.thickness * 0.18, 4, 7);
+        const blurF = clamp(this.thickness * 0.045, 1.4, 2.6);
         for (const c of this.falling) {
           const cos = Math.cos(c.angle),
             sin = Math.sin(c.angle);
@@ -1164,7 +1158,7 @@
       );
       if (!nodes.length) continue;
       paintBlobCluster(d.layer, nodes, PALETTE[d.paletteIdx], d.speckles, {
-        blur: clamp(thickness * 0.18, 3, 6),
+        blur: clamp(thickness * 0.045, 1.2, 2.4),
         flutes: d.flutes,
         alpha: d.alpha,
         pad: 12,
