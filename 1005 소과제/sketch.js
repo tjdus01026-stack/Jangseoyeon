@@ -394,6 +394,9 @@
     return arr;
   }
 
+  /**
+   * nodes: [{x,y,r}] or [{x,y,rx,ry}] in WORLD coordinates
+   */
   function paintBlobCluster(layer, nodes, palette, speckles, opts) {
     if (!nodes.length) return;
     opts = opts || {};
@@ -1024,7 +1027,7 @@
     }
 
     render() {
-      const blur = clamp(this.thickness * 0.48, 9, 17);
+      const blur = clamp(this.thickness * 0.18, 4, 7);
       if (this.rubble && this.rubble.length) {
         paintBlobCluster(
           this.layerDebris,
@@ -1055,7 +1058,7 @@
         drawJointMarker(this.joint, this.dragging);
       } else if (this.state === "collapsing") {
         if (this.debrisChunks && this.debrisChunks.length) {
-          const blurD = clamp(this.thickness * 0.3, 5, 9);
+          const blurD = clamp(this.thickness * 0.14, 3, 5);
           for (const ch of this.debrisChunks) {
             const cos = Math.cos(ch.angle),
               sin = Math.sin(ch.angle);
@@ -1074,7 +1077,7 @@
       }
 
       if (this.falling.length) {
-        const blurF = clamp(this.thickness * 0.42, 7, 13);
+        const blurF = clamp(this.thickness * 0.18, 4, 7);
         for (const c of this.falling) {
           const cos = Math.cos(c.angle),
             sin = Math.sin(c.angle);
@@ -1161,7 +1164,7 @@
       );
       if (!nodes.length) continue;
       paintBlobCluster(d.layer, nodes, PALETTE[d.paletteIdx], d.speckles, {
-        blur: clamp(thickness * 0.5, 5, 9),
+        blur: clamp(thickness * 0.18, 3, 6),
         flutes: d.flutes,
         alpha: d.alpha,
         pad: 12,
@@ -1256,7 +1259,6 @@
       return;
     }
     const p = canvasPos(e);
-
     let best = null,
       bestDist = Infinity;
     for (const s of sites) {
