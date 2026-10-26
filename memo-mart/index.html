@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1a46d8">
+  <title>MEMO MART · Groceries for Your Brain</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Anton&family=Lobster&family=Titan+One&family=Nunito:ital,wght@0,600;0,800;0,900;1,900&family=Oswald:wght@500;700&family=Permanent+Marker&family=Shrikhand&family=Noto+Sans+KR:wght@500..900&family=Black+Han+Sans&family=Do+Hyeon&family=Jua&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- ===== STORE SIGN ===== -->
+  <header class="mast">
+    <div class="mast-top">MEMO MART <span>×</span> YOUR BRAIN <em>EXTRA SIZE</em></div>
+    <div class="mast-main">
+      <i class="spark s1" aria-hidden="true"></i><i class="spark s2" aria-hidden="true"></i><i class="spark s3" aria-hidden="true"></i><i class="spark s4" aria-hidden="true"></i>
+      <h1 class="logo">
+        <span class="logo-word">Memo Mart</span>
+        <span class="logo-sub">Groceries for Your Brain</span>
+      </h1>
+      <div class="fresh" aria-hidden="true"><span>ALWAYS<br><b>FRESH</b><br>24/7</span></div>
+    </div>
+    <div class="how" aria-label="How it works"><div class="how-track"><div class="how-set"><span><b>1</b> Write a memo</span><i>→</i><span><b>2</b> Price it by what it's worth</span><i>→</i><span><b>3</b> Come back, re-price &amp; rate it</span><i>★</i></div><div class="how-set" aria-hidden="true"><span><b>1</b> Write a memo</span><i>→</i><span><b>2</b> Price it by what it's worth</span><i>→</i><span><b>3</b> Come back, re-price &amp; rate it</span><i>★</i></div></div></div>
+  </header>
+
+  <!-- ===== QUICK STOCK (write a memo right away) ===== -->
+  <section class="stock" aria-label="Write a new memo">
+    <form id="stock-form" class="stock-card" autocomplete="off">
+      <div class="stock-write">
+        <label class="step" for="memo-input"><b>1</b> Write it</label>
+        <div class="write-row">
+          <textarea id="memo-input" rows="4" placeholder="What's on your mind?"></textarea>
+          <div class="pad-box" id="stock-pad" aria-label="Drawing pad: your drawing becomes the product photo"></div>
+        </div>
+        <div class="aisles" id="aisle-pick" role="radiogroup" aria-label="Aisle"></div>
+      </div>
+      <div class="stock-price">
+        <span class="step"><b>2</b> Price it</span>
+        <div class="stock-tag" id="stock-tag"></div>
+        <div class="stepper">
+          <button type="button" class="step-btn" data-step="-1" aria-label="Lower price">▼</button>
+          <label class="price-field"><b>$</b><input id="stock-price" type="number" min="0" step="0.01" value="1.99" inputmode="decimal" aria-label="Price in dollars"></label>
+          <button type="button" class="step-btn" data-step="1" aria-label="Raise price">▲</button>
+        </div>
+      </div>
+      <button class="btn btn-red big stock-go" id="stock-go" type="submit" disabled>
+        <span class="step-inv">3</span> Put it on the shelf
+      </button>
+    </form>
+  </section>
+
+  <!-- ===== STORE FLOOR ===== -->
+  <main class="layout">
+    <section class="aisle">
+      <div class="aisle-head">
+        <h2>Today's Shelf</h2>
+        <small>Tap an item to read it, re-price it or rate it.</small>
+      </div>
+      <div class="shelf-tools">
+        <div class="tabs" id="tabs" role="tablist"></div>
+        <div class="tools-right">
+          <input id="q" class="search" type="search" placeholder="🔍 Search" aria-label="Search memos">
+          <button type="button" class="btn btn-blue sm" id="btn-dig" title="Open a memo you haven't looked at in a while">🎲 Pull an old memo</button>
+        </div>
+      </div>
+      <div class="shelf" id="shelf"></div>
+      <div class="empty" id="empty" hidden></div>
+
+      <div class="aisle-head sets-head">
+        <h2>Combo Packs</h2>
+        <small>Bundle related memos: add 2+ items to the cart, then “Make a Combo”.</small>
+      </div>
+      <div class="sets" id="sets"></div>
+    </section>
+
+    <aside class="side">
+      <div class="rank-board">
+        <div class="rank-title"><span class="oval">TOP SELLERS</span></div>
+        <ol id="rank"></ol>
+      </div>
+    </aside>
+  </main>
+
+  <!-- ===== CART (shows up only when used) ===== -->
+  <div class="basket" id="basket" aria-label="Cart"></div>
+
+  <!-- ===== MODAL / TOAST ===== -->
+  <div class="modal" id="modal" hidden></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
