@@ -2538,7 +2538,9 @@ body::after { opacity: .06; }
    ========================================================= */
 .box-title[data-setpage] { cursor: pointer; }
 .box-title[data-setpage]:hover { filter: brightness(1.08); text-decoration: underline 4px var(--yellow); text-underline-offset: 6px; }
-.box-maker { margin: -6px 0 12px; font-family: var(--f-cond); font-weight: 900; font-size: 15px; letter-spacing: .06em; color: var(--blue); }
+/* maker line tilts with the title (same box width → same pivot) so the gap stays even */
+.box .box-title:has(+ .box-maker) { margin-bottom: 14px !important; }
+.box-maker { position: relative; z-index: 1; margin: 0 0 18px; padding: 0 90px 0 14px; transform: rotate(-4deg); line-height: 1.2; font-family: var(--f-cond); font-weight: 900; font-size: 15px; letter-spacing: .06em; color: var(--blue); }
 
 .modal-card.combo { background: #fff; }
 .combo-page { padding: 0 !important; }
