@@ -1,15 +1,14 @@
 /* =========================================================
    MEMO MART — shared shelf settings
-   Paste the "firebaseConfig" object from your Firebase project
-   below (see README → "모두가 보는 공유 진열대 만들기").
-   While apiKey still says PASTE_..., the app stays local:
-   memos are saved only in each visitor's own browser.
+   Firebase 연결 설정
    ========================================================= */
+
 window.MEMO_MART_FIREBASE = {
-  apiKey: "PASTE_YOUR_API_KEY",
-  authDomain: "",
-  projectId: "",
-  storageBucket: "",
-  messagingSenderId: "",
-  appId: ""
+  apiKey: "AIzaSyCnbsa040ADEgQ-COsVIZVtB7_YH1FABsQ",
+  authDomain: "memomart-sj0126.firebaseapp.com",
+  projectId: "memomart-sj0126",
+  storageBucket: "memomart-sj0126.firebasestorage.app",
+  messagingSenderId: "412705671782",
+  appId: "1:412705671782:web:c23076ede8ce26280d3ba7",
+  measurementId: "G-CE25J07L5V",
 };
