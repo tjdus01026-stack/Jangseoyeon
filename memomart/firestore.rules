@@ -19,13 +19,11 @@ service cloud.firestore {
                     && resource.data.owner == request.auth.uid;
     }
 
-    // Combo packs: everyone can read; only the author can change them.
+    // Combo packs: shared — any signed-in visitor can create, re-price,
+    // add memos to, or unbox any combo.
     match /sets/{id} {
       allow read: if true;
-      allow create: if request.auth != null
-                    && request.resource.data.owner == request.auth.uid;
-      allow update, delete: if request.auth != null
-                    && resource.data.owner == request.auth.uid;
+      allow create, update, delete: if request.auth != null;
     }
   }
 }

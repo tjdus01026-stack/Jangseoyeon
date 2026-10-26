@@ -281,7 +281,7 @@
       const live = new Set();
       S.sets.forEach((st) => {
         live.add(st.id);
-        if (!isMine(st)) return;
+        /* combos are shared: anyone may edit */
         const now = pick(st, SET_KEYS);
         const j = JSON.stringify(now);
         if (synced.sets.get(st.id) === j) return;
@@ -292,7 +292,7 @@
         if (live.has(id)) return;
         const prev = JSON.parse(synced.sets.get(id));
         synced.sets.delete(id);
-        if (isMine(prev)) db.collection('sets').doc(id).delete().catch(fail);
+        db.collection('sets').doc(id).delete().catch(fail);
       });
     }
 
@@ -775,8 +775,8 @@
   </div>
   <div class="set-actions">
     <button type="button" class="btn sm btn-red" data-sact="flyer">📰 Make a flyer</button>
-    ${isMine(s) ? `<button type="button" class="btn sm btn-yellow" data-sact="price">🏷 Re-price</button>
-    <button type="button" class="btn sm" data-sact="undo">✂ Unbox</button>` : ''}
+    ${`<button type="button" class="btn sm btn-yellow" data-sact="price">🏷 Re-price</button>
+    <button type="button" class="btn sm" data-sact="undo">✂ Unbox</button>`}
   </div>
 </article>`;
     }).join('');
@@ -864,7 +864,7 @@
       a.overSet = setEl;
       if (setEl) {
         const st = S.sets.find((x) => x.id === setEl.dataset.set);
-        setEl.classList.add(st && isMine(st) && !st.items.includes(a.id) ? 'drop-hover' : 'drop-no');
+        setEl.classList.add(st && !st.items.includes(a.id) ? 'drop-hover' : 'drop-no');
       }
     }
     if (!a.overBasket && !setEl && a.reorder && el) {
@@ -893,7 +893,7 @@
       const setEl = a.overSet;
       setEl.classList.remove('drop-hover', 'drop-no');
       const st = S.sets.find((x) => x.id === setEl.dataset.set);
-      if (st && isMine(st) && !st.items.includes(a.id)) {
+      if (st && !st.items.includes(a.id)) {
         const br = setEl.getBoundingClientRect();
         a.ghost.style.transition = 'left .3s ease-in, top .3s ease-in, transform .3s ease-in, opacity .3s';
         a.ghost.style.left = `${br.left + br.width / 2 - a.ghost.offsetWidth / 2}px`;
@@ -911,7 +911,7 @@
         toast(`🎁 Added to “${st.name}”`);
         return;
       }
-      toast(!st || !isMine(st) ? 'Only the author can change this combo' : 'Already in this combo');
+      toast(st ? 'Already in this combo' : 'Combo not found');
     }
 
     if (a.overBasket) {
@@ -1747,16 +1747,19 @@
     const bb = bodyBlock(g, m.body, w - p * 2, Math.max(18, Math.round(w * 0.036)));
     const gap = Math.round(tb.fs * 0.45) + 18;          // clear space between title and memo
     const by = y + p + tb.h + gap;
-    const iy = by + bb.h + (bb.h ? 30 : 0);
-    const imgH = w * 0.62;
+    const textBottom = by + bb.h;
+    const tag = w * 0.15, tagRy = tag * 0.78;
+    // leave room above the drawing for the part of the price tag that sticks out
+    const iy = textBottom + tagRy * 0.8 + 24;
+    const imgH = w * 0.6;
     const need = iy - y + imgH + p;
     const h = hOverride || need;
     if (!draw) return need;
     frame(g, x, y, w, h, grad(g, 0, y, 0, y + h, [[0, '#ff4a4a'], [0.55, HOT], [1, '#b00012']]), YEL);
     drawTitle(g, tb, x + w - p, y + p, 'right', YEL, NAVY);
     drawBody(g, bb, x + p, by, 'left', '#fff');
-    const r = product(g, m, x + p, iy, w * 0.62, y + h - p - iy);
-    stickPrice(g, r, m.price, w * 0.15, x + 14, y + 14);
+    const r = product(g, m, x + p + tag * 0.5, iy, w * 0.62, y + h - p - iy);
+    stickPrice(g, r, m.price, tag, x + 14, textBottom + 14);   // never rises into the memo text
     return h;
   }
 
@@ -2003,7 +2006,6 @@
     if (!s) return;
     const act = b.dataset.sact;
     if (act === 'flyer') openFlyer(s.items, { title: s.name, set: s });
-    else if ((act === 'price' || act === 'undo') && !isMine(s)) { toast('Only the author can change this combo'); }
     else if (act === 'price') openSetPrice(s);
     else if (act === 'undo') {
       if (!confirm(`Unbox “${s.name}”? The memos stay on the shelf.`)) return;
