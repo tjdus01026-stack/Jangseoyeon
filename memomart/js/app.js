@@ -225,7 +225,7 @@
     const FV = firebase.firestore.FieldValue;
     const synced = { memos: new Map(), sets: new Map() };   // id -> last JSON we know the server has
     const MEMO_KEYS = ['id', 'title', 'body', 'cat', 'price', 'priceHistory', 'views', 'reviews', 'img', 'owner', 'createdAt', 'lastViewedAt'];
-    const SET_KEYS = ['id', 'name', 'items', 'price', 'box', 'owner', 'createdAt'];
+    const SET_KEYS = ['id', 'name', 'maker', 'items', 'price', 'box', 'owner', 'createdAt'];
     const pick = (o, keys) => { const r = {}; keys.forEach((k) => { if (o[k] !== undefined) r[k] = o[k]; }); return r; };
     const rj = (r) => JSON.stringify(r);
     let timer = null;
@@ -765,7 +765,8 @@
   <div class="box" style="--bx:${b.bx};--tf:${b.tf};--te:${b.te};--bt2:${b.bt2}">
     <span class="box-cost">${ms.length}-PACK COMBO · EXTRA SIZE</span>
     <span class="brand-oval">Memo Mart's</span>
-    <h3 class="box-title">${esc(s.name)}</h3>
+    <h3 class="box-title" data-setpage role="button" tabindex="0" title="See everything in this combo">${esc(s.name)}</h3>
+    ${s.maker ? `<div class="box-maker">PACKED BY ${esc(s.maker)}</div>` : ''}
     <div class="prize">
       <div class="prize-h">FREE INSIDE!</div>
       <ul class="set-items">${ms.map((m) => `<li data-open="${m.id}" style="${colorVars(m.cat)}" title="${esc(m.title)}">${esc(m.title)}</li>`).join('')}</ul>
@@ -1031,7 +1032,7 @@
     save();
   }
 
-  function openItem(id) {
+  function openItem(id, opts = {}) {
     const m = byId(id);
     if (!m) return;
     countView(m);
@@ -1083,6 +1084,13 @@
 
     const mine = isMine(m);
     mc.classList.toggle('not-mine', !mine);
+    const backSet = opts.backSet && S.sets.find((x) => x.id === opts.backSet);
+    if (backSet) {
+      const bk = document.createElement('button');
+      bk.type = 'button'; bk.className = 'btn iv-back'; bk.textContent = `← ${backSet.name}`;
+      bk.addEventListener('click', () => openSetPage(backSet));
+      $('.iv-foot', mc).prepend(bk);
+    }
     // live refresh when someone else reviews / views this item
     UI.liveItem = { id: m.id, refresh: () => { renderReviews(); renderHistory(); } };
 
@@ -1255,19 +1263,59 @@
   <ul class="pack-list">${items.map((m) => `<li style="${colorVars(m.cat)}"><span>${esc(m.title)}</span><b>${priceText(m.price)}</b></li>`).join('')}</ul>
   <div class="pack-sum">Regular total <b>${priceText(sum)}</b></div>
   <label>Name your combo<input name="name" maxlength="40" required autofocus></label>
+  <label>Your name<input name="maker" maxlength="24" required value="${esc(lastMaker())}"></label>
   <div class="m-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn btn-red big">Box It Up!</button></div>
 </form>`);
     const f = $('#f-set', mc);
     f.addEventListener('submit', (e) => {
       e.preventDefault();
       const name = f.elements.namedItem('name').value.trim();
-      if (!name) return;
-      S.sets.unshift({ id: uid(), name, items: items.map((m) => m.id), price: charm(sum * 0.8), box: Math.floor(Math.random() * BOXES.length), owner: ME.uid, createdAt: now() });
+      const maker = f.elements.namedItem('maker').value.trim();
+      if (!name || !maker) return;
+      try { localStorage.setItem(KEY + '-maker', maker); } catch (err) { /* ignore */ }
+      S.sets.unshift({ id: uid(), name, maker, items: items.map((m) => m.id), price: charm(sum * 0.8), box: Math.floor(Math.random() * BOXES.length), owner: ME.uid, createdAt: now() });
       S.basket = [];
       save(); closeModal(); renderAll();
       toast('🎁 Combo pack is out!');
       $('#sets').scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
+  }
+
+  function lastMaker() { try { return localStorage.getItem(KEY + '-maker') || ''; } catch (e) { return ''; } }
+
+  /* ---------- combo page: every item in the pack ---------- */
+  function openSetPage(s) {
+    const ms = s.items.map(byId).filter(Boolean);
+    const sum = ms.reduce((a, m) => a + m.price, 0);
+    const diff = sum - s.price;
+    const mc = openModal(`${head(`🎁 ${ms.length}-Pack Combo`, '')}
+<div class="m-body combo-page">
+  <div class="cp-hero">
+    <div class="cp-info">
+      <h2 class="cp-title">${esc(s.name)}</h2>
+      ${s.maker ? `<div class="cp-maker">PACKED BY <b>${esc(s.maker)}</b></div>` : ''}
+      <div class="cp-save">REG. <s>${priceText(sum)}</s> ${diff > 0 ? `· YOU SAVE ${usd(diff)}!` : ''}</div>
+    </div>
+    <div class="cp-tag">${tagHTML(s.price, '', 80)}</div>
+  </div>
+  <ul class="cp-list">${ms.map((m) => `
+    <li data-cp="${m.id}" style="${colorVars(m.cat)}" tabindex="0" role="button" aria-label="Open ${esc(m.title)}">
+      <div class="cp-img">${m.img ? `<img src="${esc(m.img)}" alt="">` : `<span>${catOf(m.cat).icon}</span>`}</div>
+      <div class="cp-text">
+        <span class="cp-cat">${catOf(m.cat).icon} ${catOf(m.cat).label}</span>
+        <b class="cp-name">${esc(m.title)}</b>
+        <span class="cp-stars">${starHTML(avgRating(m))} <small>👁 ${m.views}</small></span>
+      </div>
+      <div class="cp-price">${priceText(m.price)}</div>
+    </li>`).join('')}</ul>
+  <div class="m-actions"><button type="button" class="btn btn-red" data-cpflyer>📰 Make a flyer</button><button type="button" class="btn" data-close>Close</button></div>
+</div>`, 'wide combo');
+    const go = (el) => { if (el) openItem(el.dataset.cp, { backSet: s.id }); };
+    mc.addEventListener('click', (e) => {
+      if (e.target.closest('[data-cpflyer]')) { openFlyer(s.items, { title: s.name, set: s }); return; }
+      go(e.target.closest('[data-cp]'));
+    });
+    mc.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(e.target.closest('[data-cp]')); });
   }
 
   function openSetPrice(s) {
@@ -1997,7 +2045,13 @@
     }
   });
 
+  $('#sets').addEventListener('keydown', (e) => {
+    const sp = e.key === 'Enter' && e.target.closest('[data-setpage]');
+    if (sp) { const st = S.sets.find((x) => x.id === sp.closest('[data-set]').dataset.set); if (st) openSetPage(st); }
+  });
   $('#sets').addEventListener('click', (e) => {
+    const sp = e.target.closest('[data-setpage]');
+    if (sp) { const st = S.sets.find((x) => x.id === sp.closest('[data-set]').dataset.set); if (st) openSetPage(st); return; }
     const li = e.target.closest('[data-open]');
     if (li) { openItem(li.dataset.open); return; }
     const b = e.target.closest('[data-sact]');

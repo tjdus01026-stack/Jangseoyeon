@@ -2532,3 +2532,64 @@ body::after { opacity: .06; }
 .set-card.drop-no .box { outline: 6px dashed rgba(255,255,255,.5) !important; outline-offset: 6px; opacity: .7; }
 .set-card .box.bump { animation: bump-box .45s; }
 @keyframes bump-box { 30% { transform: scale(1.06) rotate(-1.5deg); } 65% { transform: scale(.98) rotate(1deg); } }
+
+/* =========================================================
+   COMBO: maker line + clickable title + combo page
+   ========================================================= */
+.box-title[data-setpage] { cursor: pointer; }
+.box-title[data-setpage]:hover { filter: brightness(1.08); text-decoration: underline 4px var(--yellow); text-underline-offset: 6px; }
+.box-maker { margin: -6px 0 12px; font-family: var(--f-cond); font-weight: 900; font-size: 15px; letter-spacing: .06em; color: var(--blue); }
+
+.modal-card.combo { background: #fff; }
+.combo-page { padding: 0 !important; }
+.cp-hero {
+  position: relative;
+  display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  padding: 26px 28px 30px;
+  background: var(--yellow);
+  border-bottom: 5px solid var(--ink);
+}
+.cp-title {
+  margin: 0;
+  font-family: var(--f-cond); font-weight: 900; font-style: italic;
+  font-size: clamp(34px, 5vw, 58px); line-height: 1.05; letter-spacing: .02em;
+  color: var(--red); -webkit-text-stroke: 2px var(--ink); paint-order: stroke fill;
+  text-shadow: 4px 4px 0 var(--ink);
+}
+.cp-maker { margin-top: 10px; font-family: var(--f-cond); font-weight: 900; font-size: 18px; letter-spacing: .06em; color: var(--ink); }
+.cp-maker b { color: var(--blue); }
+.cp-save { margin-top: 6px; font-family: var(--f-cond); font-weight: 900; font-size: 18px; color: var(--red); }
+.cp-save s { color: #555; text-decoration-color: var(--red); text-decoration-thickness: 3px; }
+.cp-tag { position: relative; flex: none; width: 210px; height: 160px; }
+.cp-tag .tag { left: 0; top: 0; right: auto; bottom: auto; width: 210px; height: 160px; }
+
+.cp-list { list-style: none; margin: 0; padding: 22px 24px 6px; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+.cp-list li {
+  display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; align-items: center; gap: 12px;
+  padding: 10px 14px 10px 10px;
+  background: linear-gradient(180deg, #fff 0 55%, #dceaff 100%);
+  border: 4px solid #fff; outline: 3px solid var(--ink);
+  box-shadow: 6px 6px 0 rgba(5, 12, 60, .35);
+  cursor: pointer; transition: transform .12s;
+}
+.cp-list li:hover, .cp-list li:focus-visible { transform: translate(-2px, -3px); outline-color: var(--red); }
+.cp-img { width: 92px; height: 92px; display: grid; place-items: center; background: var(--yellow); border: 3px solid var(--ink); }
+.cp-img img { max-width: 84%; max-height: 84%; object-fit: contain; filter: drop-shadow(2px 0 0 #fff) drop-shadow(-2px 0 0 #fff) drop-shadow(0 2px 0 #fff) drop-shadow(0 -2px 0 #fff) drop-shadow(3px 4px 2px rgba(10,22,99,.4)); }
+.cp-img span { font-size: 48px; }
+.cp-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cp-cat { font-family: var(--f-cond); font-weight: 900; font-size: 13px; letter-spacing: .05em; color: var(--red); text-transform: uppercase; }
+.cp-name { font-family: var(--f-cond); font-weight: 900; font-size: 22px; line-height: 1.1; color: var(--ink); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.cp-stars { color: var(--red); font-size: 14px; }
+.cp-stars .off { color: rgba(10,22,99,.2); }
+.cp-stars small { color: #555; margin-left: 6px; font-family: var(--f-cond); font-weight: 900; }
+.cp-price { font-family: var(--f-cond); font-weight: 900; font-size: 26px; color: var(--red); text-shadow: 2px 2px 0 var(--ink); white-space: nowrap; }
+.combo-page .m-actions { padding: 14px 24px 22px; }
+.iv-foot .iv-back { margin-right: auto; }
+.modal-card.item .iv-foot:has(.iv-back) { justify-content: space-between !important; }
+
+@media (max-width: 640px) {
+  .cp-hero { flex-direction: column; align-items: flex-start; padding: 20px 16px 24px; }
+  .cp-tag { width: 170px; height: 130px; align-self: flex-end; margin-top: -10px; }
+  .cp-tag .tag { width: 170px; height: 130px; }
+  .cp-list { padding: 18px 14px 6px; grid-template-columns: 1fr; }
+}
