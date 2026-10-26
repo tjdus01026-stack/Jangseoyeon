@@ -857,7 +857,17 @@
     const el = document.elementFromPoint(x, y);
     a.overBasket = !!(el && el.closest('#basket'));
     basketEl.classList.toggle('hover', a.overBasket);
-    if (!a.overBasket && a.reorder && el) {
+    // dropping onto a combo pack adds the memo to it
+    const setEl = !a.overBasket && el ? el.closest('#sets .set-card') : null;
+    if (a.overSet !== setEl) {
+      if (a.overSet) a.overSet.classList.remove('drop-hover', 'drop-no');
+      a.overSet = setEl;
+      if (setEl) {
+        const st = S.sets.find((x) => x.id === setEl.dataset.set);
+        setEl.classList.add(st && isMine(st) && !st.items.includes(a.id) ? 'drop-hover' : 'drop-no');
+      }
+    }
+    if (!a.overBasket && !setEl && a.reorder && el) {
       const over = el.closest('#shelf .product');
       if (over && over !== a.card) {
         const r = over.getBoundingClientRect();
@@ -878,6 +888,31 @@
     setTimeout(() => { drag.justEnded = false; }, 80);
     document.body.classList.remove('dragging');
     basketEl.classList.remove('hover');
+
+    if (a.overSet) {
+      const setEl = a.overSet;
+      setEl.classList.remove('drop-hover', 'drop-no');
+      const st = S.sets.find((x) => x.id === setEl.dataset.set);
+      if (st && isMine(st) && !st.items.includes(a.id)) {
+        const br = setEl.getBoundingClientRect();
+        a.ghost.style.transition = 'left .3s ease-in, top .3s ease-in, transform .3s ease-in, opacity .3s';
+        a.ghost.style.left = `${br.left + br.width / 2 - a.ghost.offsetWidth / 2}px`;
+        a.ghost.style.top = `${br.top + br.height / 2 - a.ghost.offsetHeight / 2}px`;
+        a.ghost.style.transform = 'scale(.15) rotate(-20deg)';
+        a.ghost.style.opacity = '0';
+        setTimeout(() => a.ghost.remove(), 320);
+        const m = byId(a.id);
+        st.items.push(a.id);
+        if (m) st.price += m.price;           // combo price grows by the added item's price
+        save();
+        renderShelf(); renderSets();
+        const card = $(`#sets .set-card[data-set="${st.id}"] .box`);
+        if (card) { card.classList.add('bump'); setTimeout(() => card.classList.remove('bump'), 500); }
+        toast(`🎁 Added to “${st.name}”`);
+        return;
+      }
+      toast(!st || !isMine(st) ? 'Only the author can change this combo' : 'Already in this combo');
+    }
 
     if (a.overBasket) {
       const br = basketEl.getBoundingClientRect();
