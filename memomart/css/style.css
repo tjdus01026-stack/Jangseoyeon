@@ -2521,3 +2521,8 @@ body::after { opacity: .06; }
   overflow: auto;
 }
 .modal-card.item .iv-info .iv-desc:empty { display: none !important; }
+
+/* shared mode: visitors see someone else's memo without author controls */
+.modal-card.not-mine #iv-price,
+.modal-card.not-mine .iv-sec:has(+ #iv-price),
+.modal-card.not-mine #iv-del { display: none !important; }

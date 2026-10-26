@@ -111,6 +111,7 @@
       views: o.views || 0,
       reviews: o.reviews || [],
       img: o.img || null,          // drawing (PNG data URL) shown as the product photo
+      owner: o.owner ?? ME.uid,    // who may edit / re-price / delete it (cloud mode)
       createdAt: t,
       lastViewedAt: o.lastViewedAt ?? t,
     };
@@ -168,7 +169,25 @@
     };
   }
 
+  /* =========================================================
+     SHARED STORE (Firebase) — everyone sees every memo;
+     only the author can edit, re-price or delete their own.
+     Without a config in js/firebase-config.js the app stays
+     local (this browser only), exactly as before.
+     ========================================================= */
+  const ME = { uid: null };
+  const CFG = window.MEMO_MART_FIREBASE;
+  const CLOUD = !!(window.firebase && CFG && CFG.apiKey && !/PASTE|YOUR_/i.test(CFG.apiKey));
+  const LOCAL_KEY = KEY + '-local';   // per-browser bits in cloud mode: cart + shelf order
+  const isMine = (o) => !CLOUD || !o || o.owner === ME.uid;
+  const reviewMine = (r) => !CLOUD || !r.by || r.by === ME.uid;
+
   function load() {
+    if (CLOUD) {
+      let local = {};
+      try { local = JSON.parse(localStorage.getItem(LOCAL_KEY) || '{}'); } catch (e) { /* ignore */ }
+      return { memos: [], sets: [], basket: Array.isArray(local.basket) ? local.basket : [], order: Array.isArray(local.order) ? local.order : [] };
+    }
     try {
       const raw = localStorage.getItem(KEY);
       if (raw) {
@@ -182,6 +201,11 @@
   }
 
   function save() {
+    if (CLOUD) {
+      try { localStorage.setItem(LOCAL_KEY, JSON.stringify({ basket: S.basket, order: S.order })); } catch (e) { /* ignore */ }
+      Cloud.push();
+      return true;
+    }
     try { localStorage.setItem(KEY, JSON.stringify(S)); return true; }
     catch (e) {
       const t = document.getElementById('toast');
@@ -191,8 +215,154 @@
   }
 
   const S = load();
-  const UI = { sort: 'manual', q: '', anim: {}, stockCat: 'idea', stockPrice: 199 };
+  const UI = { sort: 'manual', q: '', anim: {}, stockCat: 'idea', stockPrice: 199, loaded: !CLOUD, liveItem: null };
   const byId = (id) => S.memos.find((m) => m.id === id);
+
+  const Cloud = (() => {
+    if (!CLOUD) return { push() {}, start() {}, ready: Promise.resolve() };
+    const app = firebase.initializeApp(CFG);
+    const db = firebase.firestore(app);
+    const FV = firebase.firestore.FieldValue;
+    const synced = { memos: new Map(), sets: new Map() };   // id -> last JSON we know the server has
+    const MEMO_KEYS = ['id', 'title', 'body', 'cat', 'price', 'priceHistory', 'views', 'reviews', 'img', 'owner', 'createdAt', 'lastViewedAt'];
+    const SET_KEYS = ['id', 'name', 'items', 'price', 'box', 'owner', 'createdAt'];
+    const pick = (o, keys) => { const r = {}; keys.forEach((k) => { if (o[k] !== undefined) r[k] = o[k]; }); return r; };
+    const rj = (r) => JSON.stringify(r);
+    let timer = null;
+    let onRemote = () => {};
+
+    function fail(e) {
+      console.error('[memo-mart] cloud write failed', e);
+      toast(e && e.code === 'permission-denied' ? 'Only the author can change that' : 'Couldn\'t save online — check your connection');
+    }
+
+    function pushMemos() {
+      const live = new Set();
+      S.memos.forEach((m) => {
+        live.add(m.id);
+        const now = pick(m, MEMO_KEYS);
+        const j = JSON.stringify(now);
+        const prevJ = synced.memos.get(m.id);
+        if (prevJ === j) return;
+        const prev = prevJ ? JSON.parse(prevJ) : null;
+        const ref = db.collection('memos').doc(m.id);
+        if (!prev) {
+          if (!isMine(m)) return;
+          ref.set(now).catch(fail);
+        } else {
+          if (isMine(prev)) {
+            const { views, reviews, ...rest } = now;
+            ref.set(rest, { merge: true }).catch(fail);
+          } else if (now.lastViewedAt !== prev.lastViewedAt) {
+            ref.update({ lastViewedAt: now.lastViewedAt }).catch(fail);
+          }
+          // views: increments, so simultaneous visitors don't overwrite each other
+          const dv = (now.views || 0) - (prev.views || 0);
+          if (dv) ref.update({ views: FV.increment(dv) }).catch(fail);
+          // reviews: add/remove individual reviews instead of overwriting the list
+          const before = new Set((prev.reviews || []).map(rj)), after = new Set((now.reviews || []).map(rj));
+          const removed = (prev.reviews || []).filter((r) => !after.has(rj(r)));
+          const added = (now.reviews || []).filter((r) => !before.has(rj(r)));
+          const go = removed.length ? ref.update({ reviews: FV.arrayRemove(...removed) }) : Promise.resolve();
+          if (added.length) go.then(() => ref.update({ reviews: FV.arrayUnion(...added) })).catch(fail);
+          else go.catch(fail);
+        }
+        synced.memos.set(m.id, j);
+      });
+      [...synced.memos.keys()].forEach((id) => {
+        if (live.has(id)) return;
+        const prev = JSON.parse(synced.memos.get(id));
+        synced.memos.delete(id);
+        if (isMine(prev)) db.collection('memos').doc(id).delete().catch(fail);
+      });
+    }
+
+    function pushSets() {
+      const live = new Set();
+      S.sets.forEach((st) => {
+        live.add(st.id);
+        if (!isMine(st)) return;
+        const now = pick(st, SET_KEYS);
+        const j = JSON.stringify(now);
+        if (synced.sets.get(st.id) === j) return;
+        synced.sets.set(st.id, j);
+        db.collection('sets').doc(st.id).set(now).catch(fail);
+      });
+      [...synced.sets.keys()].forEach((id) => {
+        if (live.has(id)) return;
+        const prev = JSON.parse(synced.sets.get(id));
+        synced.sets.delete(id);
+        if (isMine(prev)) db.collection('sets').doc(id).delete().catch(fail);
+      });
+    }
+
+    function push() {
+      clearTimeout(timer);
+      timer = setTimeout(() => { if (ME.uid) { pushMemos(); pushSets(); } }, 250);
+    }
+
+    // apply server data in place, so open views keep working with the same objects
+    function apply(list, map, docs, keys) {
+      const seen = new Set();
+      docs.forEach((d) => {
+        const data = d.data();
+        data.id = d.id;
+        seen.add(d.id);
+        const j = JSON.stringify(pick(data, keys));
+        const local = list.find((x) => x.id === d.id);
+        if (local) {
+          const localJ = JSON.stringify(pick(local, keys));
+          const pending = map.has(d.id) && localJ !== map.get(d.id);   // local edit not yet pushed
+          map.set(d.id, j);
+          if (!pending) { Object.keys(local).forEach((k) => { if (!(k in data)) delete local[k]; }); Object.assign(local, data); }
+        } else {
+          map.set(d.id, j);
+          list.push(data);
+        }
+      });
+      // drop items deleted on the server (but keep brand-new local ones not pushed yet)
+      for (let i = list.length - 1; i >= 0; i--) {
+        const id = list[i].id;
+        if (!seen.has(id) && map.has(id)) { map.delete(id); list.splice(i, 1); }
+      }
+    }
+
+    function sortMemos() {
+      const pos = new Map((S.order || []).map((id, i) => [id, i]));
+      S.memos.sort((a, b) => {
+        const pa = pos.has(a.id) ? pos.get(a.id) : -1, pb = pos.has(b.id) ? pos.get(b.id) : -1;
+        if (pa !== pb) return pa - pb;                 // not yet arranged by this visitor → newest first, on top
+        return (b.createdAt || 0) - (a.createdAt || 0);
+      });
+      S.sets.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    }
+
+    let readyResolve;
+    const ready = new Promise((r) => { readyResolve = r; });
+
+    function start(onChange) {
+      onRemote = onChange;
+      firebase.auth().onAuthStateChanged((u) => {
+        if (!u) return;
+        ME.uid = u.uid;
+        db.collection('memos').onSnapshot((snap) => {
+          apply(S.memos, synced.memos, snap.docs, MEMO_KEYS);
+          S.memos.forEach((m) => { m.reviews = m.reviews || []; m.priceHistory = m.priceHistory || [{ price: m.price, at: m.createdAt }]; });
+          sortMemos();
+          readyResolve();
+          onRemote();
+        }, (e) => { console.error(e); toast('Couldn\'t load the shared shelf'); readyResolve(); });
+        db.collection('sets').onSnapshot((snap) => {
+          apply(S.sets, synced.sets, snap.docs, SET_KEYS);
+          sortMemos();
+          onRemote();
+        }, (e) => console.error(e));
+      });
+      firebase.auth().signInAnonymously().catch((e) => { console.error(e); toast('Couldn\'t connect to the shared shelf'); readyResolve(); });
+    }
+
+    return { push, start, ready };
+  })();
 
   /* ---------- derived ---------- */
   const avgRating = (m) => { const r = m.reviews.filter((x) => x.stars > 0); return r.length ? r.reduce((a, x) => a + x.stars, 0) / r.length : 0; };
@@ -458,6 +628,7 @@
     const text = memoInput.value;
     const img = stockPad.export();
     if (!text.trim() && !img) { memoInput.focus(); return; }
+    if (CLOUD && !ME.uid) { toast('Connecting to the shared shelf…'); return; }
     let { title, body } = splitMemo(text);
     if (!title) title = 'Untitled Doodle';
     const nm = mk({ title, body, cat: UI.stockCat, price: UI.stockPrice, img });
@@ -572,15 +743,19 @@
   }
 
   function renderSets() {
-    S.sets.forEach((s) => { s.items = s.items.filter((id) => byId(id)); });
-    S.sets = S.sets.filter((s) => s.items.length >= 2);
+    if (!CLOUD) {
+      S.sets.forEach((s) => { s.items = s.items.filter((id) => byId(id)); });
+      S.sets = S.sets.filter((s) => s.items.length >= 2);
+    }
+    // shared mode: only display what's complete; never rewrite other people's combos
+    const shown = S.sets.filter((s) => s.items.filter((id) => byId(id)).length >= 2);
     const el = $('#sets');
-    if (!S.sets.length) {
+    if (!shown.length) {
       el.innerHTML = '<div class="sets-empty">No combo packs yet. Open a memo and tap <b>🛒 Add to cart</b> on two or more, then hit <b>Make a Combo</b>.</div>';
       return;
     }
-    el.innerHTML = S.sets.map((s) => {
-      const ms = s.items.map(byId);
+    el.innerHTML = shown.map((s) => {
+      const ms = s.items.map(byId).filter(Boolean);
       const sum = ms.reduce((a, m) => a + m.price, 0);
       const diff = sum - s.price;
       const saveTxt = diff > 0 ? `YOU SAVE ${usd(diff)}!` : diff < 0 ? `PREMIUM +${usd(-diff)}` : 'REGULAR PRICE';
@@ -600,8 +775,8 @@
   </div>
   <div class="set-actions">
     <button type="button" class="btn sm btn-red" data-sact="flyer">📰 Make a flyer</button>
-    <button type="button" class="btn sm btn-yellow" data-sact="price">🏷 Re-price</button>
-    <button type="button" class="btn sm" data-sact="undo">✂ Unbox</button>
+    ${isMine(s) ? `<button type="button" class="btn sm btn-yellow" data-sact="price">🏷 Re-price</button>
+    <button type="button" class="btn sm" data-sact="undo">✂ Unbox</button>` : ''}
   </div>
 </article>`;
     }).join('');
@@ -616,7 +791,7 @@
 
   function renderBasket() {
     const items = S.basket.map(byId).filter(Boolean);
-    S.basket = items.map((m) => m.id);
+    if (UI.loaded) S.basket = items.map((m) => m.id);
     basketEl.classList.toggle('show', items.length > 0);
     basketEl.innerHTML = `
   <div class="b-icon" aria-hidden="true">🛒<b>${items.length}</b></div>
@@ -734,6 +909,7 @@
       if (ids.join() !== a.order0) {
         const map = new Map(S.memos.map((m) => [m.id, m]));
         S.memos = ids.map((id) => map.get(id)).filter(Boolean);
+        if (CLOUD) S.order = S.memos.map((m) => m.id);
         save();
       }
     }
@@ -863,14 +1039,21 @@
     <button type="button" class="btn ghost" id="iv-del">Remove</button>
   </div>
 </div>`, 'item', () => {
+      UI.liveItem = null;
       // don't lose a half-typed review when the view closes
       const c = $('#iv-comment', mc);
       if (c && c.value.trim()) addComment(c.value.trim());
       refreshBehind();
     });
 
-    // --- inline editing (saved on blur) ---
+    const mine = isMine(m);
+    mc.classList.toggle('not-mine', !mine);
+    // live refresh when someone else reviews / views this item
+    UI.liveItem = { id: m.id, refresh: () => { renderReviews(); renderHistory(); } };
+
+    // --- inline editing (saved on blur) — author only ---
     $$('.editable', mc).forEach((el) => {
+      if (!mine) { el.classList.remove('editable'); return; }
       el.contentEditable = 'plaintext-only';
       if (el.contentEditable !== 'plaintext-only') el.contentEditable = 'true';
       el.addEventListener('keydown', (e) => {
@@ -895,8 +1078,8 @@
     }
     renderPhoto();
 
-    // --- price (instant) ---
-    mountPriceEditor($('#iv-price', mc), {
+    // --- price (instant) — author only ---
+    if (mine) mountPriceEditor($('#iv-price', mc), {
       get: () => m.price,
       set: (v) => {
         if (session.price) session.price.price = v;
@@ -923,7 +1106,7 @@
       const n = Number(b.dataset.star);
       picked = n;
       if (session.review) session.review.stars = n;
-      else { session.review = { stars: n, text: '', at: now() }; m.reviews.push(session.review); }
+      else { session.review = { id: uid(), by: ME.uid, stars: n, text: '', at: now() }; m.reviews.push(session.review); }
       save();
       paintStars(n);
       si.classList.remove('pop'); void si.offsetWidth; si.classList.add('pop');
@@ -932,7 +1115,7 @@
     });
     function addComment(text) {
       if (session.review && !session.review.text) session.review.text = text;
-      else { session.review = { stars: 0, text, at: now() }; m.reviews.push(session.review); }
+      else { session.review = { id: uid(), by: ME.uid, stars: 0, text, at: now() }; m.reviews.push(session.review); }
       save();
     }
     const comment = $('#iv-comment', mc);
@@ -960,7 +1143,7 @@
       const ul = $('#iv-reviews', mc);
       ul.innerHTML = m.reviews.length
         ? m.reviews.map((r, i) => ({ r, i })).reverse().map(({ r, i }) =>
-          `<li>${r.stars ? `<span class="rv-stars">${starHTML(r.stars)}</span>` : ''}${r.text ? `<span class="rv-text">${esc(r.text)}</span>` : ''}<span class="rv-date">${ago(r.at)}</span><button type="button" class="rv-del" data-rdel="${i}" aria-label="Delete review">✕</button></li>`
+          `<li>${r.stars ? `<span class="rv-stars">${starHTML(r.stars)}</span>` : ''}${r.text ? `<span class="rv-text">${esc(r.text)}</span>` : ''}<span class="rv-date">${ago(r.at)}${CLOUD && r.by === ME.uid ? ' · you' : ''}</span>${reviewMine(r) ? `<button type="button" class="rv-del" data-rdel="${i}" aria-label="Delete review">✕</button>` : ''}</li>`
         ).join('')
         : '<li class="no-reviews" style="background:none;border:0;box-shadow:none;padding:0"></li>';
     }
@@ -968,6 +1151,7 @@
       const d = e.target.closest('[data-rdel]');
       if (!d) return;
       const r = m.reviews[Number(d.dataset.rdel)];
+      if (!reviewMine(r)) return;
       m.reviews.splice(Number(d.dataset.rdel), 1);
       if (r === session.review) { session.review = null; paintStars(0); }
       save();
@@ -995,6 +1179,7 @@
     });
     $('#iv-flyer', mc).addEventListener('click', () => openFlyer([m.id], { title: m.title }));
     $('#iv-del', mc).addEventListener('click', () => {
+      if (!mine) return;
       if (!confirm(`Remove “${m.title}” from the shelf?\nIts reviews and price history go with it.`)) return;
       removeMemo(m.id);
       onModalClose = null;
@@ -1042,7 +1227,7 @@
       e.preventDefault();
       const name = f.elements.namedItem('name').value.trim();
       if (!name) return;
-      S.sets.unshift({ id: uid(), name, items: items.map((m) => m.id), price: charm(sum * 0.8), box: Math.floor(Math.random() * BOXES.length), createdAt: now() });
+      S.sets.unshift({ id: uid(), name, items: items.map((m) => m.id), price: charm(sum * 0.8), box: Math.floor(Math.random() * BOXES.length), owner: ME.uid, createdAt: now() });
       S.basket = [];
       save(); closeModal(); renderAll();
       toast('🎁 Combo pack is out!');
@@ -1075,7 +1260,7 @@
   let fontsReady = null;
   function loadFonts() {
     if (!fontsReady) {
-      const list = ['900 30px "Nunito"', '800 30px "Nunito"', 'italic 900 30px "Nunito"', '700 30px "Nunito"', '40px "Anton"', '40px "Alfa Slab One"', '30px "Lobster"', '900 30px "Noto Sans KR"', '700 30px "Noto Sans KR"'];
+      const list = ['900 30px "Nunito"', '800 30px "Nunito"', '700 30px "Nunito"', '40px "Anton"', '40px "Alfa Slab One"', '30px "Lobster"', '900 30px "Noto Sans KR"', '700 30px "Noto Sans KR"'];
       fontsReady = document.fonts
         ? Promise.all(list.map((f) => document.fonts.load(f, 'Memo Mart $0123 메모'))).catch(() => {})
         : Promise.resolve();
@@ -1423,6 +1608,7 @@
       const k = Math.min(w / pic.width, h / pic.height, 3);
       const dw = pic.width * k, dh = pic.height * k;
       cutout(g, pic, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+      return { x: x + (w - dw) / 2, y: y + (h - dh) / 2, w: dw, h: dh };
     } else {
       const fs = Math.min(w, h) * 0.62;
       g.save();
@@ -1431,7 +1617,16 @@
       g.shadowColor = 'rgba(10,22,99,.4)'; g.shadowOffsetX = 8; g.shadowOffsetY = 10;
       g.fillText(catOf(m.cat).icon, x + w / 2, y + h / 2);
       g.restore();
+      return { x: x + (w - fs) / 2, y: y + (h - fs) / 2, w: fs, h: fs };
     }
+  }
+  // price tag stuck on the product's bottom-right corner
+  // price tag stuck on the product's top-left corner
+  function stickPrice(g, r, price, size, minLeft = -Infinity, minTop = -Infinity) {
+    const rx = size, ry = size * 0.78;
+    const cx = Math.max(r.x + rx * 0.25, minLeft + rx * 1.05);
+    const cy = Math.max(r.y + ry * 0.35, minTop + ry * 1.05);
+    burstTag(g, cx, cy, rx, ry, price);
   }
   function whiteBurst(g, cx, cy, r, text, rot = 0.12) {
     g.save(); g.translate(cx, cy); g.rotate(rot);
@@ -1451,222 +1646,132 @@
     return st ? st.t : 'FRESH!';
   }
 
-  /* ---- Complete, collision-free flyer typography ----
-     Unlike the old fixed-line wrap(), these helpers NEVER add ellipses.
-     They retain explicit newlines and create extra paper as a memo grows.
-     Each Canvas font and tracking setting is measured before drawing. */
-  function flyerFont(g, size, title = false) {
-    g.font = title ? `italic 900 ${size}px ${F.body}` : `800 ${size}px ${F.body}`;
-    // Canvas 2D letterSpacing is supported in current Chrome / Safari / Firefox.
-    // Older browsers simply use their normal tracking instead.
-    if ('letterSpacing' in g) g.letterSpacing = `${(size * (title ? 0.018 : 0.022)).toFixed(2)}px`;
+  /* ---- typography for flyer items: italic title, roomier tracking, full memo text ---- */
+  const TL = 1.2, BL = 1.45;
+  const titleFont = (g, fs) => { g.font = `900 ${fs}px ${F.cond}`; g.letterSpacing = `${(fs * 0.045).toFixed(1)}px`; };
+  const bodyFont = (g, fs) => { g.font = `800 ${fs}px ${F.body}`; g.letterSpacing = `${(fs * 0.03).toFixed(1)}px`; };
+  function titleBlock(g, text, maxW, fsMax, fsMin, maxLines = 3) {
+    const t = isLatin(text) ? text.toUpperCase() : text;
+    let fs = fsMax, lines = [];
+    for (; fs >= fsMin; fs -= 2) { titleFont(g, fs); lines = wrap(g, t, maxW - fs * 0.2, 99); if (lines.length <= maxLines) break; }
+    if (fs < fsMin) { fs = fsMin; titleFont(g, fs); lines = wrap(g, t, maxW - fs * 0.2, 99); }
+    g.letterSpacing = '0px';
+    return { lines, fs, h: lines.length * fs * TL };
   }
-
-  function fullWrap(g, text, maxW) {
-    const width = Math.max(24, maxW - 4);
-    const result = [];
-    const paragraphs = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');
-    for (const paragraph of paragraphs) {
-      if (!paragraph.length) { result.push(''); continue; }
-      let line = '';
-      const tokens = paragraph.match(/\S+|\s+/gu) || [];
-      for (const token of tokens) {
-        if (/^\s+$/u.test(token) && !line) continue;
-        if (g.measureText(line + token).width <= width) { line += token; continue; }
-        if (line.trim()) { result.push(line.trimEnd()); line = ''; }
-        if (/^\s+$/u.test(token)) continue;
-        // Extremely long words and unspaced Hangul also wrap, never clip.
-        for (const character of Array.from(token)) {
-          if (line && g.measureText(line + character).width > width) {
-            result.push(line);
-            line = '';
-          }
-          line += character;
-        }
-      }
-      result.push(line.trimEnd());
-    }
-    return result;
+  function bodyBlock(g, text, maxW, fs) {
+    if (!text || !text.trim()) return { lines: [], fs, h: 0 };
+    bodyFont(g, fs);
+    const lines = [];
+    String(text).trim().split('\n').forEach((para) => { if (!para.trim()) lines.push(''); else lines.push(...wrap(g, para, maxW, 999)); });
+    g.letterSpacing = '0px';
+    return { lines, fs, h: lines.length * fs * BL };
   }
-
-  function flyerLines(g, text, fontSize, width, title = false) {
-    g.save();
-    flyerFont(g, fontSize, title);
-    const lines = fullWrap(g, text, title ? width - fontSize * 0.22 : width);
+  function titleInk(g, tb) {
+    g.save(); titleFont(g, tb.fs); g.textBaseline = 'top';
+    let top = Infinity, bot = -Infinity;
+    tb.lines.forEach((l, i) => {
+      const mt = g.measureText(l);
+      top = Math.min(top, i * tb.fs * TL - mt.actualBoundingBoxAscent);
+      bot = Math.max(bot, i * tb.fs * TL + mt.actualBoundingBoxDescent);
+    });
     g.restore();
-    return lines;
+    return { top, h: bot - top };
   }
-
-  function printFlyerLines(g, lines, x, top, fontSize, leading, color, title = false, align = 'left') {
-    g.save();
-    flyerFont(g, fontSize, title);
-    g.textAlign = align;
-    g.textBaseline = 'top';
-    g.fillStyle = color;
-    for (let i = 0; i < lines.length; i++) {
-      if (title) {
-        // Explicit oblique skew also slants Hangul (many Korean fallbacks
-        // have no native italic cut, so `font: italic` alone is insufficient).
-        g.save();
-        const korean = /[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]/u.test(lines[i]);
-        const lean = korean ? 0.18 : 0.04;
-        g.translate(x + fontSize * lean, top + i * leading);
-        g.transform(1, 0, -lean, 1, 0, 0);
-        g.fillText(lines[i], 0, 0);
-        g.restore();
-      } else {
-        g.fillText(lines[i], x, top + i * leading);
-      }
-    }
+  function drawTitle(g, tb, x, y, align, fill, stroke) {
+    g.save(); titleFont(g, tb.fs); g.textAlign = align; g.textBaseline = 'top'; g.lineJoin = 'round';
+    const SK = 0.24; // true oblique for every script (Korean fonts have no italic)
+    tb.lines.forEach((l, i) => {
+      const base = y + i * tb.fs * TL + tb.fs;   // slant around the line's bottom
+      g.save();
+      g.translate(x, base);
+      g.transform(1, 0, -SK, 1, 0, 0);
+      g.translate(align === 'right' ? -tb.fs * SK : 0, -tb.fs);
+      g.fillStyle = NAVY; g.fillText(l, 4, 5);
+      g.lineWidth = Math.max(4, tb.fs * 0.1); g.strokeStyle = stroke; g.strokeText(l, 0, 0);
+      g.fillStyle = fill; g.fillText(l, 0, 0);
+      g.restore();
+    });
     g.restore();
   }
-
-  function boxMeasure(g, m, w) {
-    const p = w > 600 ? 38 : 25;
-    const titleSize = w > 600 ? 63 : 42;
-    const titleLead = titleSize * 1.35;
-    const titleW = w * 0.53 - p - 4;
-    const titleLines = flyerLines(g, m.title || '', titleSize, titleW, true);
-    const headerH = Math.max(w > 600 ? 295 : 183, p + 8 + titleLines.length * titleLead + 16);
-    const bodySize = w > 600 ? 29 : 23;
-    const bodyLead = bodySize * 1.55;
-    const bodyLines = m.body ? flyerLines(g, m.body, bodySize, w - p * 2 - 36) : [];
-    const bodyH = bodyLines.length ? bodyLines.length * bodyLead + 32 : 0;
-    const artH = m.img ? (w > 600 ? 290 : 205) : (w > 600 ? 185 : 135);
-    const h = headerH + (bodyH ? 18 + bodyH : 0) + 14 + artH + p + 18;
-    return { h, p, titleSize, titleLead, titleLines, headerH, bodySize, bodyLead, bodyLines, bodyH, artH };
+  function drawBody(g, bb, x, y, align, color) {
+    g.save(); bodyFont(g, bb.fs); g.textAlign = align; g.textBaseline = 'top'; g.fillStyle = color;
+    bb.lines.forEach((l, i) => g.fillText(l, x, y + i * bb.fs * BL));
+    g.restore();
   }
-
-  /* Layout A: deal burst and italic headline occupy separate header columns.
-     Copy lives in its own expanding panel, never below a price tag. */
-  function drawBoxAd(g, m, x, y, w, L, rank) {
-    const { h, p, titleSize, titleLead, titleLines, headerH, bodySize, bodyLead, bodyLines, bodyH, artH } = L;
-    g.save();
+  function frame(g, x, y, w, h, fill, inner) {
     g.fillStyle = 'rgba(5,12,60,.55)'; g.fillRect(x + 10, y + 12, w, h);
-    g.fillStyle = grad(g, 0, y, 0, y + h, [[0, '#ff4a4a'], [0.55, HOT], [1, '#b00012']]);
-    g.fillRect(x, y, w, h);
+    g.fillStyle = fill; g.fillRect(x, y, w, h);
     g.lineWidth = 6; g.strokeStyle = NAVY; g.strokeRect(x, y, w, h);
-    g.lineWidth = 3; g.strokeStyle = YEL; g.strokeRect(x + 10, y + 10, w - 20, h - 20);
-
-    const burstR = Math.min(w * 0.183, 148);
-    burstTag(g, x + p + burstR + 2, y + p + burstR * 0.83 + 6, burstR, burstR * 0.79, m.price);
-    const tx = x + w * 0.445;
-    printFlyerLines(g, titleLines, tx + 2, y + p + 11, titleSize, titleLead, NAVY, true);
-    printFlyerLines(g, titleLines, tx, y + p + 8, titleSize, titleLead, YEL, true);
-
-    let nextY = y + headerH;
-    if (bodyLines.length) {
-      nextY += 18;
-      g.fillStyle = '#fff8dd'; g.fillRect(x + p, nextY, w - 2 * p, bodyH);
-      g.lineWidth = 3; g.strokeStyle = NAVY; g.strokeRect(x + p, nextY, w - 2 * p, bodyH);
-      printFlyerLines(g, bodyLines, x + p + 17, nextY + 16, bodySize, bodyLead, NAVY);
-      nextY += bodyH;
-    }
-    const artY = nextY + 14;
-    product(g, m, x + p + 6, artY + 4, w * 0.55, artH - 12);
-    const prev = prevPrice(m);
-    if (prev && prev > m.price && m.price > 0) {
-      whiteBurst(g, x + w * 0.81, artY + artH * 0.49, Math.min(w * 0.145, 120), `${Math.round((1 - m.price / prev) * 100)}% OFF`, -0.18);
-    } else {
-      g.fillStyle = YEL;
-      g.font = `900 ${w > 600 ? 35 : 24}px ${F.cond}`;
-      g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.fillText(dealText(m, rank), x + w * 0.78, artY + artH * 0.55, w * 0.34);
-    }
-    g.restore();
+    if (inner) { g.lineWidth = 3; g.strokeStyle = inner; g.strokeRect(x + 10, y + 10, w - 20, h - 20); }
   }
 
+  /* layout A — box ad: price burst top-left, italic title top-right, memo, product, deal burst */
+  function boxAd(g, m, x, y, w, rank, draw, hOverride) {
+    const p = Math.round(w * 0.07);
+    const tb = titleBlock(g, m.title, w - p * 2, Math.round(w * 0.14), 24, 3);
+    const bb = bodyBlock(g, m.body, w - p * 2, Math.max(18, Math.round(w * 0.036)));
+    const gap = Math.round(tb.fs * 0.45) + 18;          // clear space between title and memo
+    const by = y + p + tb.h + gap;
+    const iy = by + bb.h + (bb.h ? 30 : 0);
+    const imgH = w * 0.62;
+    const need = iy - y + imgH + p;
+    const h = hOverride || need;
+    if (!draw) return need;
+    frame(g, x, y, w, h, grad(g, 0, y, 0, y + h, [[0, '#ff4a4a'], [0.55, HOT], [1, '#b00012']]), YEL);
+    drawTitle(g, tb, x + w - p, y + p, 'right', YEL, NAVY);
+    drawBody(g, bb, x + p, by, 'left', '#fff');
+    const r = product(g, m, x + p, iy, w * 0.62, y + h - p - iy);
+    stickPrice(g, r, m.price, w * 0.15, x + 14, y + 14);
+    return h;
+  }
+
+  /* layout B — bumper-sticker banner */
   const STRIPS = [
-    { bg: YEL, title: HOT },
-    { bg: BLUE, title: YEL },
-    { bg: HOT, title: '#fff' },
+    { bg: YEL, title: HOT, stroke: NAVY },
+    { bg: BLUE, title: YEL, stroke: NAVY },
+    { bg: HOT, title: '#fff', stroke: NAVY },
   ];
-  function stickerMeasure(g, m, w) {
-    const p = 24, imageW = 188, priceW = 200;
-    const textX = p + imageW + 22;
-    const textW = w - textX - priceW - p - 16;
-    const titleSize = 51, titleLead = 66;
-    const titleLines = flyerLines(g, m.title || '', titleSize, textW, true);
-    const bodySize = 25, bodyLead = 38;
-    const bodyLines = m.body ? flyerLines(g, m.body, bodySize, textW - 30) : [];
-    const bodyH = bodyLines.length ? bodyLines.length * bodyLead + 28 : 0;
-    const h = Math.max(280, p * 2 + titleLines.length * titleLead + (bodyH ? 15 + bodyH : 0) + 14);
-    return { h, p, imageW, priceW, textX, textW, titleSize, titleLead, titleLines, bodySize, bodyLead, bodyLines, bodyH };
-  }
-
-  /* Layout B: image | growing text column | price. */
-  function drawSticker(g, m, x, y, w, L, i) {
-    const { h, p, imageW, textX, textW, titleSize, titleLead, titleLines, bodySize, bodyLead, bodyLines, bodyH } = L;
+  function stickerAd(g, m, x, y, w, i, draw) {
+    // bumper-sticker banner: huge italic title, product cut-out at the right end, price stuck on its corner
     const c = STRIPS[i % STRIPS.length];
-    g.save();
-    g.fillStyle = 'rgba(5,12,60,.55)'; g.fillRect(x + 10, y + 12, w, h);
-    g.fillStyle = c.bg; g.fillRect(x, y, w, h);
-    g.lineWidth = 6; g.strokeStyle = NAVY; g.strokeRect(x, y, w, h);
-    g.lineWidth = 3; g.strokeStyle = '#fff'; g.strokeRect(x + 9, y + 9, w - 18, h - 18);
-    product(g, m, x + p, y + p + 12, imageW, 188);
-    const tx = x + textX;
-    printFlyerLines(g, titleLines, tx + 2, y + p + 8, titleSize, titleLead, NAVY, true);
-    printFlyerLines(g, titleLines, tx, y + p + 5, titleSize, titleLead, c.title, true);
-    if (bodyLines.length) {
-      const bodyY = y + p + titleLines.length * titleLead + 20;
-      g.fillStyle = NAVY; g.fillRect(tx - 10, bodyY, textW + 16, bodyH);
-      printFlyerLines(g, bodyLines, tx + 5, bodyY + 14, bodySize, bodyLead, '#fff');
-    }
-    burstTag(g, x + w - 114, y + 129, 92, 75, m.price);
-    if (h > 340) {
-      g.font = `900 27px ${F.cond}`;
-      g.fillStyle = c.title; g.textBaseline = 'middle'; g.textAlign = 'center';
-      g.fillText(catOf(m.cat).label.toUpperCase(), x + p + imageW / 2, y + 252, imageW);
-    }
-    g.restore();
+    const h = 340;
+    if (!draw) return h;
+    frame(g, x, y, w, h, c.bg, '#fff');
+    const imgW = 300;
+    const tx = x + 44, tw = w - imgW - 44 - 110;
+    const tb = titleBlock(g, m.title, tw, 170, 40, 2);
+    while (tb.h > h - 70 && tb.fs > 40) Object.assign(tb, titleBlock(g, m.title, tw, tb.fs - 6, 40, 2));
+    const ink = titleInk(g, tb);
+    drawTitle(g, tb, tx, y + (h - ink.h) / 2 - ink.top, 'left', c.title, c.stroke);
+    const r = product(g, m, x + w - imgW - 40, y + 30, imgW - 20, h - 80);
+    stickPrice(g, r, m.price, 76, tx + tw + 4, y + 14);
+    return h;
   }
 
-  function couponMeasure(g, m, w) {
-    const p = 26, leftW = 278;
-    const panelX = p + leftW + 16;
-    const panelW = w - panelX - p;
-    const innerW = panelW - 52;
-    const prev = prevPrice(m);
-    const offer = prev && prev > m.price ? `SAVE ${priceText(prev - m.price)} ON` : 'SPECIAL ON';
-    const offerSize = 37, offerLead = 47;
-    const offerLines = flyerLines(g, offer, offerSize, innerW);
-    const titleSize = 54, titleLead = 70;
-    const titleLines = flyerLines(g, m.title || '', titleSize, innerW, true);
-    const bodySize = 25, bodyLead = 39;
-    const bodyLines = m.body ? flyerLines(g, m.body, bodySize, innerW - 26) : [];
-    const bodyH = bodyLines.length ? bodyLines.length * bodyLead + 26 : 0;
-    const panelContentH = 28 + offerLines.length * offerLead + 14 + titleLines.length * titleLead + (bodyH ? 23 + bodyH : 0) + 30;
-    const h = Math.max(460, panelContentH + p * 2);
-    return { h, p, leftW, panelX, panelW, innerW, offerSize, offerLead, offerLines, titleSize, titleLead, titleLines, bodySize, bodyLead, bodyLines, bodyH };
-  }
-
-  /* Layout C: illustration/price to the left, growing coupon copy to the right. */
-  function drawCoupon(g, m, x, y, w, L) {
-    const { h, p, leftW, panelX, panelW, offerSize, offerLead, offerLines, titleSize, titleLead, titleLines, bodySize, bodyLead, bodyLines, bodyH } = L;
-    g.save();
+  /* layout C — coupon: product left, red SAVE panel with italic title + memo, price bursts in corners */
+  function couponAd(g, m, x, y, w, draw) {
+    // coupon: big product on the left, big title + memo filling the right, no inner box
+    const p = 40;
+    const imgW = w * 0.42;
+    const tx = x + p + imgW + 30, tw = w - (tx - x) - p;
+    const tb = titleBlock(g, m.title, tw, 108, 34, 2);
+    const bb = bodyBlock(g, m.body, tw, 26);
+    const ink = titleInk(g, tb);
+    const tgap = Math.round(tb.fs * 0.35) + 20;
+    const textH = ink.h + (bb.h ? tgap + bb.h : 0);
+    const h = Math.max(440, textH + p * 2 + 20);
+    if (!draw) return h;
     g.fillStyle = 'rgba(5,12,60,.55)'; g.fillRect(x + 10, y + 12, w, h);
     g.fillStyle = '#fff8dc'; g.fillRect(x, y, w, h);
-    g.setLineDash([16, 10]); g.lineWidth = 4; g.strokeStyle = NAVY; g.strokeRect(x + 2, y + 2, w - 4, h - 4); g.setLineDash([]);
-    const px = x + panelX, py = y + p, ph = h - 2 * p;
-    g.fillStyle = HOT; g.fillRect(px, py, panelW, ph);
-    g.lineWidth = 5; g.strokeStyle = NAVY; g.strokeRect(px, py, panelW, ph);
-    let cy = py + 28;
-    printFlyerLines(g, offerLines, px + 26, cy, offerSize, offerLead, YEL);
-    cy += offerLines.length * offerLead + 14;
-    printFlyerLines(g, titleLines, px + 26 + 2, cy + 3, titleSize, titleLead, NAVY, true);
-    printFlyerLines(g, titleLines, px + 26, cy, titleSize, titleLead, '#fff', true);
-    cy += titleLines.length * titleLead;
-    if (bodyLines.length) {
-      cy += 23;
-      g.fillStyle = '#fff7d8'; g.fillRect(px + 13, cy, panelW - 26, bodyH);
-      printFlyerLines(g, bodyLines, px + 26, cy + 13, bodySize, bodyLead, NAVY);
-    }
-    burstTag(g, x + p + leftW * 0.48, y + 112, 96, 79, m.price);
-    product(g, m, x + p + 18, y + 222, leftW - 36, 174);
-    g.restore();
+    g.save(); g.setLineDash([16, 10]); g.lineWidth = 4; g.strokeStyle = NAVY; g.strokeRect(x + 2, y + 2, w - 4, h - 4); g.restore();
+    const r = product(g, m, x + p, y + p, imgW, h - p * 2);
+    stickPrice(g, r, m.price, 84, x + 14, y + 14);
+    const ty = y + (h - textH) / 2;
+    drawTitle(g, tb, tx, ty - ink.top, 'left', HOT, NAVY);
+    if (bb.h) drawBody(g, bb, tx, ty + ink.h + tgap, 'left', NAVY);
+    return h;
   }
 
-  /* Measure first, then size the canvas and draw each row. No cut-off copy. */
   function drawFlyer(cv, memos, st) {
     const theme = THEMES[st.theme] ? st.theme : 'box';
     const items = memos.slice(0, 12);
@@ -1674,49 +1779,48 @@
     const W = 1080, pad = 44, gap = 34;
     const cols = theme === 'box' && n > 1 ? 2 : 1;
     const cw = (W - pad * 2 - gap * (cols - 1)) / cols;
-    const topY = 78;
-
-    // Use a separate measuring context before resizing the actual canvas.
-    const probe = document.createElement('canvas').getContext('2d');
-    const metrics = items.map((m) => theme === 'box' ? boxMeasure(probe, m, cw)
-      : theme === 'sticker' ? stickerMeasure(probe, m, cw) : couponMeasure(probe, m, cw));
-    const rows = Math.ceil(n / cols);
-    const rowHeights = Array.from({ length: rows }, (_, r) => Math.max(...metrics.slice(r * cols, (r + 1) * cols).map((v) => v.h)));
-    const H = Math.ceil(topY + rowHeights.reduce((a, b) => a + b, 0) + Math.max(0, rows - 1) * gap + 70);
-    cv.width = W; cv.height = H;
     const g = cv.getContext('2d');
-    g.lineJoin = 'round';
     const rankIds = ranking().map((m) => m.id);
+    const measure = (m, i) => theme === 'box' ? boxAd(g, m, 0, 0, cw, 0, false)
+      : theme === 'sticker' ? stickerAd(g, m, 0, 0, cw, i, false) : couponAd(g, m, 0, 0, cw, false);
+    const rowH = [];
+    items.forEach((m, i) => { const r = Math.floor(i / cols); rowH[r] = Math.max(rowH[r] || 0, measure(m, i)); });
+    const topY = 78;
+    const H = topY + rowH.reduce((a2, b2) => a2 + b2, 0) + gap * Math.max(0, rowH.length - 1) + 70;
+    cv.width = W; cv.height = H;
+    g.textBaseline = 'middle';
+    g.lineJoin = 'round';
     const t0 = now();
+
     water(g, 0, 0, W, H);
 
-    g.font = `900 24px ${F.cond}`;
-    g.textBaseline = 'middle';
+    // small print only: store name, dates, combo info
+    g.font = `900 24px ${F.cond}`; g.letterSpacing = '1px';
     g.textAlign = 'left'; g.fillStyle = YEL;
     let cap = 'MEMO MART';
     if (st.set) {
       const sum = memos.reduce((s2, m) => s2 + m.price, 0);
       cap += `  ·  COMBO: ${st.set.name}  ${priceText(st.set.price)}${sum > st.set.price ? `  (SAVE ${usd(sum - st.set.price)})` : ''}`;
     }
-    g.fillText(fitLine(g, cap, W - pad * 2 - 280), pad, 40);
+    g.fillText(fitLine(g, cap, W - pad * 2 - 300), pad, 40);
     g.textAlign = 'right'; g.fillStyle = '#fff';
     g.fillText(`${md(t0)} – ${md(t0 + 6 * DAY)}`, W - pad, 40);
+    g.letterSpacing = '0px';
 
     let yy = topY;
-    for (let r = 0; r < rows; r++) {
+    rowH.forEach((rh, r) => {
       for (let c = 0; c < cols; c++) {
         const i = r * cols + c;
         if (i >= n) break;
         const m = items[i], x = pad + c * (cw + gap);
-        if (theme === 'box') drawBoxAd(g, m, x, yy, cw, metrics[i], rankIds.indexOf(m.id));
-        else if (theme === 'sticker') drawSticker(g, m, x, yy, cw, metrics[i], i);
-        else drawCoupon(g, m, x, yy, cw, metrics[i]);
+        if (theme === 'box') boxAd(g, m, x, yy, cw, rankIds.indexOf(m.id), true, rh);
+        else if (theme === 'sticker') stickerAd(g, m, x, yy, cw, i, true);
+        else couponAd(g, m, x, yy, cw, true);
       }
-      yy += rowHeights[r] + gap;
-    }
+      yy += rh + gap;
+    });
 
-    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = 'rgba(255,255,255,.75)';
-    g.font = `700 16px ${F.body}`;
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = 'rgba(255,255,255,.75)'; g.font = `700 16px ${F.body}`;
     g.fillText(`Memo Mart · Prices change with your mind · ${fmtDate(t0)}`, W / 2, H - 32);
   }
 
@@ -1864,6 +1968,7 @@
     if (!s) return;
     const act = b.dataset.sact;
     if (act === 'flyer') openFlyer(s.items, { title: s.name, set: s });
+    else if ((act === 'price' || act === 'undo') && !isMine(s)) { toast('Only the author can change this combo'); }
     else if (act === 'price') openSetPrice(s);
     else if (act === 'undo') {
       if (!confirm(`Unbox “${s.name}”? The memos stay on the shelf.`)) return;
@@ -1903,6 +2008,17 @@
 
   renderStockForm();
   renderAll();
-  save();
+  if (!CLOUD) save();
   memoInput.focus({ preventScroll: true });
+
+  if (CLOUD) {
+    document.body.classList.add('cloud');
+    $('#shelf').innerHTML = '<div class="empty">Loading the shared shelf…</div>';
+    Cloud.start(() => {
+      UI.loaded = true;
+      if (drag.active) return;          // don't yank cards out from under a drag
+      renderShelf(); renderSets(); renderRank(); renderBasket();
+      if (UI.liveItem && byId(UI.liveItem.id)) UI.liveItem.refresh();
+    });
+  }
 })();
