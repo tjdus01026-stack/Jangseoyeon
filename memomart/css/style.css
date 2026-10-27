@@ -2595,3 +2595,53 @@ body::after { opacity: .06; }
   .cp-tag .tag { width: 170px; height: 130px; }
   .cp-list { padding: 18px 14px 6px; grid-template-columns: 1fr; }
 }
+
+/* =========================================================
+   FIX: the sticky modal header always stays above the price
+   burst when the product page scrolls
+   ========================================================= */
+.modal-card > .m-head { z-index: 30 !important; }
+.iv-bigtag, .cp-tag { z-index: 2 !important; }
+
+/* =========================================================
+   COMBO PAGE — reviews (same look as the product page)
+   ========================================================= */
+.combo-page .iv-sec { margin: 22px 24px 10px; border-top: 3px solid var(--ink); padding-top: 14px; display: flex; align-items: center; gap: 12px; }
+.combo-page .iv-sec h4 { transform: none; font-size: 22px; padding: 2px 12px 4px; background: var(--red-gloss, var(--red)); color: var(--yellow); text-shadow: 2px 2px 0 var(--ink); }
+.combo-page .iv-sec .cp-avg { font-family: var(--f-cond); font-size: 18px; color: var(--ink); text-transform: none; }
+.combo-page .iv-sec .cp-avg .rv-stars { font-size: 20px; }
+.combo-page .iv-sec .cp-avg .rv-stars .on { color: var(--red); }
+.combo-page .iv-sec .rate-saved { color: var(--green); text-shadow: none; }
+.combo-page .review-box { margin: 0 24px; }
+.combo-page .review-box .star-input button { font-size: 34px; color: rgba(10, 22, 99, .22); padding: 0 2px; cursor: pointer; background: none; border: 0; }
+.combo-page .review-box .star-input button.on { color: var(--red); text-shadow: 2px 2px 0 var(--ink); }
+.combo-page .reviews { margin: 14px 24px 0; }
+.combo-page .reviews:empty { display: none; }
+.combo-page .m-actions { margin-top: 18px; }
+@media (max-width: 640px) {
+  .combo-page .iv-sec { margin: 20px 14px 10px; }
+  .combo-page .review-box { margin: 0 14px; }
+  .combo-page .reviews { margin: 12px 14px 0; }
+}
+
+/* rating on the combo card, next to PACKED BY */
+.box-maker .box-rate { letter-spacing: 0; font-size: 15px; }
+.box-maker .box-rate .on { color: var(--red); }
+.box-maker .box-rate .off { color: rgba(10, 22, 99, .25); }
+.box-maker .box-dot { margin: 0 4px; }
+
+/* =========================================================
+   MEMO INPUT — first line (the product name) shows bold
+   ========================================================= */
+.write-row { position: relative; }
+.memo-ink {
+  position: absolute;
+  z-index: 2;
+  margin: 0; border: 0; box-sizing: border-box;
+  overflow: hidden;
+  pointer-events: none;
+  background: none;
+  color: transparent;
+}
+.memo-ink b { font-weight: inherit; color: transparent; -webkit-text-stroke: .05em var(--ink-c, #0a1663); paint-order: stroke; }
+.memo-ink span { color: transparent; }

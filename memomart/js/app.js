@@ -215,7 +215,7 @@
   }
 
   const S = load();
-  const UI = { sort: 'manual', q: '', anim: {}, stockCat: 'idea', stockPrice: 199, loaded: !CLOUD, liveItem: null };
+  const UI = { sort: 'manual', q: '', anim: {}, stockCat: 'idea', stockPrice: 199, loaded: !CLOUD, liveItem: null, liveSet: null };
   const byId = (id) => S.memos.find((m) => m.id === id);
 
   const Cloud = (() => {
@@ -225,7 +225,7 @@
     const FV = firebase.firestore.FieldValue;
     const synced = { memos: new Map(), sets: new Map() };   // id -> last JSON we know the server has
     const MEMO_KEYS = ['id', 'title', 'body', 'cat', 'price', 'priceHistory', 'views', 'reviews', 'img', 'owner', 'createdAt', 'lastViewedAt'];
-    const SET_KEYS = ['id', 'name', 'maker', 'items', 'price', 'box', 'owner', 'createdAt'];
+    const SET_KEYS = ['id', 'name', 'maker', 'items', 'price', 'box', 'reviews', 'owner', 'createdAt'];
     const pick = (o, keys) => { const r = {}; keys.forEach((k) => { if (o[k] !== undefined) r[k] = o[k]; }); return r; };
     const rj = (r) => JSON.stringify(r);
     let timer = null;
@@ -234,6 +234,16 @@
     function fail(e) {
       console.error('[memo-mart] cloud write failed', e);
       toast(e && e.code === 'permission-denied' ? 'Only the author can change that' : 'Couldn\'t save online — check your connection');
+    }
+
+    // reviews: add/remove individual reviews instead of overwriting the list
+    function pushReviews(ref, prev, now) {
+      const before = new Set((prev.reviews || []).map(rj)), after = new Set((now.reviews || []).map(rj));
+      const removed = (prev.reviews || []).filter((r) => !after.has(rj(r)));
+      const added = (now.reviews || []).filter((r) => !before.has(rj(r)));
+      const go = removed.length ? ref.update({ reviews: FV.arrayRemove(...removed) }) : Promise.resolve();
+      if (added.length) go.then(() => ref.update({ reviews: FV.arrayUnion(...added) })).catch(fail);
+      else go.catch(fail);
     }
 
     function pushMemos() {
@@ -259,13 +269,7 @@
           // views: increments, so simultaneous visitors don't overwrite each other
           const dv = (now.views || 0) - (prev.views || 0);
           if (dv) ref.update({ views: FV.increment(dv) }).catch(fail);
-          // reviews: add/remove individual reviews instead of overwriting the list
-          const before = new Set((prev.reviews || []).map(rj)), after = new Set((now.reviews || []).map(rj));
-          const removed = (prev.reviews || []).filter((r) => !after.has(rj(r)));
-          const added = (now.reviews || []).filter((r) => !before.has(rj(r)));
-          const go = removed.length ? ref.update({ reviews: FV.arrayRemove(...removed) }) : Promise.resolve();
-          if (added.length) go.then(() => ref.update({ reviews: FV.arrayUnion(...added) })).catch(fail);
-          else go.catch(fail);
+          pushReviews(ref, prev, now);
         }
         synced.memos.set(m.id, j);
       });
@@ -284,9 +288,15 @@
         /* combos are shared: anyone may edit */
         const now = pick(st, SET_KEYS);
         const j = JSON.stringify(now);
-        if (synced.sets.get(st.id) === j) return;
+        const prevJ = synced.sets.get(st.id);
+        if (prevJ === j) return;
         synced.sets.set(st.id, j);
-        db.collection('sets').doc(st.id).set(now).catch(fail);
+        const ref = db.collection('sets').doc(st.id);
+        if (!prevJ) { ref.set(now).catch(fail); return; }
+        const prev = JSON.parse(prevJ);
+        const { reviews, ...rest } = now;
+        ref.set(rest, { merge: true }).catch(fail);
+        pushReviews(ref, prev, now);
       });
       [...synced.sets.keys()].forEach((id) => {
         if (live.has(id)) return;
@@ -354,6 +364,7 @@
         }, (e) => { console.error(e); toast('Couldn\'t load the shared shelf'); readyResolve(); });
         db.collection('sets').onSnapshot((snap) => {
           apply(S.sets, synced.sets, snap.docs, SET_KEYS);
+          S.sets.forEach((st) => { st.reviews = st.reviews || []; });
           sortMemos();
           onRemote();
         }, (e) => console.error(e));
@@ -635,6 +646,7 @@
     S.memos.unshift(nm);
     save();
     memoInput.value = '';
+    memoBold.paint();
     stockPad.clear();
     stockGo.disabled = true;
     UI.anim[nm.id] = 'drop-in';
@@ -645,8 +657,45 @@
     memoInput.focus();
   }
 
+  /* first line = product name → shown bold while typing.
+     A text layer sits over the textarea with identical metrics; only the
+     title line is visible there, drawn with a stroke so glyph widths (and
+     the caret) never shift. */
+  const memoBold = (() => {
+    const ink = document.createElement('div');
+    ink.className = 'memo-ink';
+    ink.setAttribute('aria-hidden', 'true');
+    memoInput.parentNode.insertBefore(ink, memoInput.nextSibling);
+    const COPY = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'wordSpacing', 'textTransform', 'textIndent', 'tabSize',
+      'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'whiteSpace', 'wordBreak', 'overflowWrap', 'textAlign', 'direction'];
+    function layout() {
+      const cs = getComputedStyle(memoInput);
+      COPY.forEach((k) => { ink.style[k] = cs[k]; });
+      ink.style.whiteSpace = 'pre-wrap';
+      ink.style.left = (memoInput.offsetLeft + memoInput.clientLeft) + 'px';
+      ink.style.top = (memoInput.offsetTop + memoInput.clientTop) + 'px';
+      ink.style.width = memoInput.clientWidth + 'px';
+      ink.style.height = memoInput.clientHeight + 'px';
+      ink.style.setProperty('--ink-c', cs.color);
+      ink.scrollTop = memoInput.scrollTop;
+    }
+    function paint() {
+      const v = memoInput.value;
+      const m = /^(\s*\n)?([^\n]*)/.exec(v);          // skip blank leading lines, like splitMemo
+      const lead = m[1] || '', title = m[2] || '', rest = v.slice(lead.length + title.length);
+      ink.innerHTML = `${esc(lead)}<b>${esc(title)}</b><span>${esc(rest)}</span>\u200b`;
+      ink.scrollTop = memoInput.scrollTop;
+    }
+    memoInput.addEventListener('scroll', () => { ink.scrollTop = memoInput.scrollTop; });
+    if (window.ResizeObserver) new ResizeObserver(() => { layout(); paint(); }).observe(memoInput);
+    window.addEventListener('resize', layout);
+    if (document.fonts) document.fonts.ready.then(layout);
+    layout(); paint();
+    return { paint, layout };
+  })();
+
   $('#stock-form').addEventListener('submit', (e) => { e.preventDefault(); submitStock(); });
-  memoInput.addEventListener('input', () => refreshGo());
+  memoInput.addEventListener('input', () => { refreshGo(); memoBold.paint(); });
   memoInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submitStock(); }
   });
@@ -766,7 +815,11 @@
     <span class="box-cost">${ms.length}-PACK COMBO · EXTRA SIZE</span>
     <span class="brand-oval">Memo Mart's</span>
     <h3 class="box-title" data-setpage role="button" tabindex="0" title="See everything in this combo">${esc(s.name)}</h3>
-    ${s.maker ? `<div class="box-maker">PACKED BY ${esc(s.maker)}</div>` : ''}
+    ${(() => {
+      const rs = s.reviews || [], avg = avgRating({ reviews: rs });
+      const bits = [s.maker ? `PACKED BY ${esc(s.maker)}` : '', avg ? `<span class="box-rate">${starHTML(avg)}</span>` : rs.length ? `<span class="box-rate-n">💬 ${rs.length}</span>` : ''].filter(Boolean);
+      return bits.length ? `<div class="box-maker">${bits.join(' <span class="box-dot">·</span> ')}</div>` : '';
+    })()}
     <div class="prize">
       <div class="prize-h">FREE INSIDE!</div>
       <ul class="set-items">${ms.map((m) => `<li data-open="${m.id}" style="${colorVars(m.cat)}" title="${esc(m.title)}">${esc(m.title)}</li>`).join('')}</ul>
@@ -1308,14 +1361,77 @@
       </div>
       <div class="cp-price">${priceText(m.price)}</div>
     </li>`).join('')}</ul>
+  <div class="iv-sec cp-sec"><h4>Reviews</h4><span class="cp-avg" id="cp-avg"></span><span class="rate-saved" id="cp-saved">✓ Saved</span></div>
+  <div class="review-box">
+    <div class="star-input" role="radiogroup" aria-label="Rate this combo">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-star="${n}" aria-label="${n} star${n > 1 ? 's' : ''}">★</button>`).join('')}</div>
+    <input id="cp-comment" maxlength="200" placeholder="Write a review…" aria-label="Review">
+    <button type="button" class="btn btn-red" id="cp-post" aria-label="Post review">↵</button>
+  </div>
+  <ul class="reviews" id="cp-reviews"></ul>
   <div class="m-actions"><button type="button" class="btn btn-red" data-cpflyer>📰 Make a flyer</button><button type="button" class="btn" data-close>Close</button></div>
-</div>`, 'wide combo');
+</div>`, 'wide combo', () => { UI.liveSet = null; rv.flush(); renderSets(); });
+    s.reviews = s.reviews || [];
+    const rv = mountReviews(mc, s, { box: $('.review-box', mc), list: $('#cp-reviews', mc), avg: $('#cp-avg', mc), saved: $('#cp-saved', mc) });
+    UI.liveSet = { id: s.id, refresh: rv.render };
     const go = (el) => { if (el) openItem(el.dataset.cp, { backSet: s.id }); };
     mc.addEventListener('click', (e) => {
       if (e.target.closest('[data-cpflyer]')) { openFlyer(s.items, { title: s.name, set: s }); return; }
+      if (e.target.closest('.review-box, .reviews')) return;
       go(e.target.closest('[data-cp]'));
     });
     mc.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(e.target.closest('[data-cp]')); });
+  }
+
+  /* ---------- review widget (stars + text + Enter), used by combo packs ---------- */
+  function mountReviews(mc, obj, el) {
+    const session = { review: null };
+    const si = $('.star-input', el.box), comment = $('input', el.box), postBtn = $('.btn', el.box);
+    let picked = 0, savedTimer;
+    const flash = () => { el.saved.classList.add('show'); clearTimeout(savedTimer); savedTimer = setTimeout(() => el.saved.classList.remove('show'), 1200); };
+    const paint = (n) => $$('button', si).forEach((b) => b.classList.toggle('on', Number(b.dataset.star) <= n));
+    si.addEventListener('mouseover', (e) => { const b = e.target.closest('[data-star]'); if (b) paint(Number(b.dataset.star)); });
+    si.addEventListener('mouseleave', () => paint(picked));
+    si.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-star]');
+      if (!b) return;
+      picked = Number(b.dataset.star);
+      if (session.review) session.review.stars = picked;
+      else { session.review = { id: uid(), by: ME.uid, stars: picked, text: '', at: now() }; obj.reviews.push(session.review); }
+      save(); paint(picked); render(); flash();
+    });
+    function addText(text) {
+      if (session.review && !session.review.text) session.review.text = text;
+      else { session.review = { id: uid(), by: ME.uid, stars: 0, text, at: now() }; obj.reviews.push(session.review); }
+      save();
+    }
+    function post() {
+      const t = comment.value.trim();
+      if (!t && !session.review) { comment.focus(); return; }
+      if (t) addText(t);
+      comment.value = ''; session.review = null; picked = 0; paint(0);
+      render(); flash(); comment.focus();
+    }
+    comment.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); post(); } });
+    postBtn.addEventListener('click', post);
+    el.list.addEventListener('click', (e) => {
+      const d = e.target.closest('[data-rdel]');
+      if (!d) return;
+      const r = obj.reviews[Number(d.dataset.rdel)];
+      if (!r || !reviewMine(r)) return;
+      obj.reviews.splice(Number(d.dataset.rdel), 1);
+      if (r === session.review) { session.review = null; picked = 0; paint(0); }
+      save(); render();
+    });
+    function render() {
+      const rs = obj.reviews || [];
+      const avg = avgRating({ reviews: rs });
+      el.avg.innerHTML = avg ? `<span class="rv-stars">${starHTML(avg)}</span> <b>${avg.toFixed(1)}</b> (${rs.filter((r) => r.stars).length})` : '';
+      el.list.innerHTML = rs.map((r, i) => ({ r, i })).reverse().map(({ r, i }) =>
+        `<li>${r.stars ? `<span class="rv-stars">${starHTML(r.stars)}</span>` : ''}${r.text ? `<span class="rv-text">${esc(r.text)}</span>` : ''}<span class="rv-date">${ago(r.at)}${CLOUD && r.by === ME.uid ? ' · you' : ''}</span>${reviewMine(r) ? `<button type="button" class="rv-del" data-rdel="${i}" aria-label="Delete review">✕</button>` : ''}</li>`
+      ).join('');
+    }
+    render();
+    return { render, flush: () => { const t = comment.value.trim(); if (t) addText(t); } };
   }
 
   function openSetPrice(s) {
@@ -2110,6 +2226,7 @@
       if (drag.active) return;          // don't yank cards out from under a drag
       renderShelf(); renderSets(); renderRank(); renderBasket();
       if (UI.liveItem && byId(UI.liveItem.id)) UI.liveItem.refresh();
+      if (UI.liveSet && S.sets.some((x) => x.id === UI.liveSet.id)) UI.liveSet.refresh();
     });
   }
 })();
