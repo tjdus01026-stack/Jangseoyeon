@@ -181,6 +181,10 @@
   const LOCAL_KEY = KEY + '-local';   // per-browser bits in cloud mode: cart + shelf order
   const isMine = (o) => !CLOUD || !o || o.owner === ME.uid;
   const reviewMine = (r) => !CLOUD || !r.by || r.by === ME.uid;
+  // "My Mart only": products I stocked, plus anything I reviewed — and only my reviews
+  const myReview = (r) => !CLOUD || r.by === ME.uid;
+  const inMyMart = (o) => isMine(o) || (o.reviews || []).some(myReview);
+  const shownReviews = (rs) => (UI.mine ? rs.filter(myReview) : rs);
 
   function load() {
     if (CLOUD) {
@@ -215,7 +219,8 @@
   }
 
   const S = load();
-  const UI = { sort: 'manual', q: '', anim: {}, stockCat: 'idea', stockPrice: 199, loaded: !CLOUD, liveItem: null, liveSet: null };
+  const UI = { sort: 'manual', q: '', anim: {}, stockCat: 'idea', stockPrice: 199, loaded: !CLOUD, liveItem: null, liveSet: null, mine: false };
+  try { UI.mine = localStorage.getItem('memo-mart-v3-mine') === '1'; } catch (e) { /* ignore */ }
   const byId = (id) => S.memos.find((m) => m.id === id);
 
   const Cloud = (() => {
@@ -733,10 +738,11 @@
     ).join('');
   }
 
-  const canReorder = () => UI.sort === 'manual' && !UI.q.trim();
+  const canReorder = () => UI.sort === 'manual' && !UI.q.trim() && !UI.mine;
 
   function visibleMemos() {
     let list = S.memos.slice();
+    if (UI.mine) list = list.filter(inMyMart);
     const q = UI.q.trim().toLowerCase();
     if (q) list = list.filter((m) => `${m.title} ${m.body} ${m.reviews.map((r) => r.text).join(' ')}`.toLowerCase().includes(q));
     const by = {
@@ -751,12 +757,13 @@
   function cardHTML(m, rank) {
     const cat = catOf(m.cat);
     const st = sticker(m, rank);
-    const avg = avgRating(m);
+    const avg = avgRating({ reviews: shownReviews(m.reviews) });
     const prev = prevPrice(m);
     return `
 <article class="product ${m.img ? 'has-img' : ''} ${UI.anim[m.id] || ''}" data-id="${m.id}" style="${colorVars(m.cat)}" tabindex="0" aria-label="${esc(m.title)}, ${priceText(m.price)}. Open">
   <button type="button" class="grip" aria-label="Pick up and move" title="Drag to rearrange, or drop into the cart"></button>
   <div class="face">
+    ${UI.mine && !isMine(m) ? '<span class="my-rev-badge">MY REVIEW</span>' : ''}
     <div class="cat-band"><span>${cat.icon} ${cat.label}</span>${st ? `<span class="sticker ${st.k}"><b>${st.t}</b></span>` : ''}</div>
     ${m.img ? `<div class="p-img"><img src="${esc(m.img)}" alt="" draggable="false"></div>` : ''}
     <h3 class="p-title">${esc(m.title)}</h3>
@@ -778,7 +785,9 @@
     const empty = $('#empty');
     empty.hidden = list.length > 0;
     if (!list.length) {
-      empty.innerHTML = S.memos.length
+      empty.innerHTML = UI.mine && !UI.q.trim()
+        ? 'Your mart is empty!<small>Stock a memo or leave a review — it shows up here.</small>'
+        : S.memos.length
         ? 'Nothing matches that search.<small>Try a different word.</small>'
         : 'The shelf is empty!<small>Write your first memo in the box above.</small>';
     }
@@ -797,10 +806,10 @@
       S.sets = S.sets.filter((s) => s.items.length >= 2);
     }
     // shared mode: only display what's complete; never rewrite other people's combos
-    const shown = S.sets.filter((s) => s.items.filter((id) => byId(id)).length >= 2);
+    const shown = S.sets.filter((s) => s.items.filter((id) => byId(id)).length >= 2 && (!UI.mine || inMyMart(s)));
     const el = $('#sets');
     if (!shown.length) {
-      el.innerHTML = '<div class="sets-empty">No combo packs yet. Open a memo and tap <b>🛒 Add to cart</b> on two or more, then hit <b>Make a Combo</b>.</div>';
+      el.innerHTML = UI.mine ? '<div class="sets-empty">No combo packs of yours yet.</div>' : '<div class="sets-empty">No combo packs yet. Open a memo and tap <b>🛒 Add to cart</b> on two or more, then hit <b>Make a Combo</b>.</div>';
       return;
     }
     el.innerHTML = shown.map((s) => {
@@ -816,7 +825,7 @@
     <span class="brand-oval">Memo Mart's</span>
     <h3 class="box-title" data-setpage role="button" tabindex="0" title="See everything in this combo">${esc(s.name)}</h3>
     ${(() => {
-      const rs = s.reviews || [], avg = avgRating({ reviews: rs });
+      const rs = shownReviews(s.reviews || []), avg = avgRating({ reviews: rs });
       const bits = [s.maker ? `PACKED BY ${esc(s.maker)}` : '', avg ? `<span class="box-rate">${starHTML(avg)}</span>` : rs.length ? `<span class="box-rate-n">💬 ${rs.length}</span>` : ''].filter(Boolean);
       return bits.length ? `<div class="box-maker">${bits.join(' <span class="box-dot">·</span> ')}</div>` : '';
     })()}
@@ -837,7 +846,7 @@
   }
 
   function renderRank() {
-    const r = ranking();
+    const r = UI.mine ? ranking().filter(inMyMart) : ranking();
     $('#rank').innerHTML = r.length
       ? r.map((m, i) => `<li data-open="${m.id}" title="${esc(m.title)}"><span class="rk">#${i + 1}</span><span class="rt">${esc(m.title)}</span><span class="rv">👁 ${m.views}<b>${priceText(m.price)}</b></span></li>`).join('')
       : '<li class="rank-empty">Open your memos to rack up views — the most-read ones land here.</li>';
@@ -1234,11 +1243,12 @@
     $('#iv-post', mc).addEventListener('click', post);
 
     function renderReviews() {
-      const avg = avgRating(m);
-      $('#iv-avg', mc).innerHTML = avg ? `<span class="rv-stars">${starHTML(avg)}</span> <b>${avg.toFixed(1)}</b> <small>(${m.reviews.filter((r) => r.stars).length})</small>` : '';
+      const avg = avgRating({ reviews: shownReviews(m.reviews) });
+      $('#iv-avg', mc).innerHTML = avg ? `<span class="rv-stars">${starHTML(avg)}</span> <b>${avg.toFixed(1)}</b> <small>(${shownReviews(m.reviews).filter((r) => r.stars).length})</small>` : '';
       const ul = $('#iv-reviews', mc);
-      ul.innerHTML = m.reviews.length
-        ? m.reviews.map((r, i) => ({ r, i })).reverse().map(({ r, i }) =>
+      const vis = m.reviews.map((r, i) => ({ r, i })).filter(({ r }) => !UI.mine || myReview(r));
+      ul.innerHTML = vis.length
+        ? vis.reverse().map(({ r, i }) =>
           `<li>${r.stars ? `<span class="rv-stars">${starHTML(r.stars)}</span>` : ''}${r.text ? `<span class="rv-text">${esc(r.text)}</span>` : ''}<span class="rv-date">${ago(r.at)}${CLOUD && r.by === ME.uid ? ' · you' : ''}</span>${reviewMine(r) ? `<button type="button" class="rv-del" data-rdel="${i}" aria-label="Delete review">✕</button>` : ''}</li>`
         ).join('')
         : '<li class="no-reviews" style="background:none;border:0;box-shadow:none;padding:0"></li>';
@@ -1423,10 +1433,10 @@
       save(); render();
     });
     function render() {
-      const rs = obj.reviews || [];
+      const all = obj.reviews || [], rs = shownReviews(all);
       const avg = avgRating({ reviews: rs });
       el.avg.innerHTML = avg ? `<span class="rv-stars">${starHTML(avg)}</span> <b>${avg.toFixed(1)}</b> (${rs.filter((r) => r.stars).length})` : '';
-      el.list.innerHTML = rs.map((r, i) => ({ r, i })).reverse().map(({ r, i }) =>
+      el.list.innerHTML = all.map((r, i) => ({ r, i })).filter(({ r }) => !UI.mine || myReview(r)).reverse().map(({ r, i }) =>
         `<li>${r.stars ? `<span class="rv-stars">${starHTML(r.stars)}</span>` : ''}${r.text ? `<span class="rv-text">${esc(r.text)}</span>` : ''}<span class="rv-date">${ago(r.at)}${CLOUD && r.by === ME.uid ? ' · you' : ''}</span>${reviewMine(r) ? `<button type="button" class="rv-del" data-rdel="${i}" aria-label="Delete review">✕</button>` : ''}</li>`
       ).join('');
     }
@@ -2183,6 +2193,23 @@
       save(); renderSets(); toast('✂ Unboxed');
     }
   });
+
+  const myBtn = $('#my-mart');
+  function paintMyMart() {
+    myBtn.setAttribute('aria-pressed', String(UI.mine));
+    myBtn.innerHTML = UI.mine ? '<span class="mm-top">SHOW ALL</span><span class="mm-sub">AISLES</span>' : '<span class="mm-top">MY MART</span><span class="mm-sub">ONLY!</span>';
+    document.body.classList.toggle('my-mode', UI.mine);
+    $('#shelf-h').textContent = UI.mine ? 'My Mart' : "Today's Shelf";
+  }
+  myBtn.addEventListener('click', () => {
+    UI.mine = !UI.mine;
+    try { localStorage.setItem('memo-mart-v3-mine', UI.mine ? '1' : '0'); } catch (e) { /* ignore */ }
+    paintMyMart();
+    myBtn.classList.remove('stamp'); void myBtn.offsetWidth; myBtn.classList.add('stamp');
+    renderShelf(); renderSets(); renderRank();
+    toast(UI.mine ? '⚡ Only your products & reviews' : '🛒 Showing the whole mart');
+  });
+  paintMyMart();
 
   $('#rank').addEventListener('click', (e) => {
     const li = e.target.closest('[data-open]');

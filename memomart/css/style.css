@@ -2645,3 +2645,71 @@ body::after { opacity: .06; }
 }
 .memo-ink b { font-weight: inherit; color: transparent; -webkit-text-stroke: .05em var(--ink-c, #0a1663); paint-order: stroke; }
 .memo-ink span { color: transparent; }
+
+/* =========================================================
+   MY MART ONLY — starburst toggle under TOP SELLERS
+   (sits in the sticky sidebar, so it follows the scroll)
+   ========================================================= */
+.my-mart {
+  position: relative;
+  isolation: isolate;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  width: 220px; height: 170px;
+  margin: 22px auto 0;
+  padding: 0;
+  border: 0; background: none;
+  cursor: pointer;
+  font-family: var(--f-cond); font-weight: 900;
+  line-height: .9;
+  color: var(--red);
+  text-shadow: 3px 3px 0 var(--ink);
+  transform: rotate(-6deg);
+  transition: transform .15s;
+}
+.my-mart::before, .my-mart::after {
+  content: ""; position: absolute; inset: 0;
+  clip-path: var(--burst);
+}
+.my-mart::before { z-index: -1; background: var(--yellow); }
+.my-mart::after { z-index: -2; background: var(--ink); transform: translate(5px, 6px); }
+.my-mart .mm-top { font-size: 34px; letter-spacing: .02em; }
+.my-mart .mm-sub { font-size: 26px; color: var(--blue); letter-spacing: .06em; margin-top: 4px; }
+.my-mart:hover { transform: rotate(-3deg) scale(1.05); }
+.my-mart:active { transform: rotate(-3deg) scale(.96); }
+.my-mart:focus-visible { outline: 0; }
+.my-mart:focus-visible::after { background: var(--cyan); }
+.my-mart.stamp { animation: stamp .55s cubic-bezier(.3, 1.6, .5, 1); }
+/* on: red burst, yellow type */
+.my-mart[aria-pressed="true"] { color: var(--yellow); }
+.my-mart[aria-pressed="true"]::before { background: var(--red); }
+.my-mart[aria-pressed="true"] .mm-sub { color: #fff; }
+
+/* card badge: products you only reviewed */
+.product .my-rev-badge {
+  position: absolute; z-index: 4; left: -8px; top: -12px;
+  padding: 3px 9px 4px;
+  background: var(--yellow); color: var(--red);
+  border: 3px solid var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+  font-family: var(--f-cond); font-weight: 900; font-size: 14px; letter-spacing: .05em;
+  transform: rotate(-6deg);
+  pointer-events: none;
+}
+
+@media (max-width: 960px) {
+  /* sidebar becomes a top strip: keep the button reachable as a floating burst */
+  .my-mart {
+    position: fixed; z-index: 40;
+    right: 10px; bottom: 96px;
+    width: 128px; height: 100px; margin: 0;
+  }
+  .my-mart .mm-top { font-size: 21px; }
+  .my-mart .mm-sub { font-size: 16px; margin-top: 2px; }
+}
+.product .my-rev-badge { left: 8px; top: 40px; font-size: 13px; }
+.product.has-img .my-rev-badge { top: 40px; }
+@media (max-width: 960px) {
+  .my-mart { width: 140px; height: 110px; }
+  .my-mart .mm-top { font-size: 22px; text-shadow: 2px 2px 0 var(--ink); }
+  .my-mart .mm-sub { font-size: 15px; text-shadow: 1px 1px 0 var(--ink); }
+}
